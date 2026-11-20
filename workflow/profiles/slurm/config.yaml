@@ -1,0 +1,16 @@
+# Site profile for Snakemake 8 and 9. executor: slurm needs
+# snakemake-executor-plugin-slurm. The cluster: key was removed in
+# Snakemake 8 and is parsed as a target name.
+# Replace ACCOUNT and PARTITION locally. Do not commit a real account.
+# Analysis rules do not request a GPU. The plugin version is not in
+# environment.txt, so it is not pinned here.
+# hbond, defects, qstar_adopt, and the reductions use these defaults
+# until a canary sacct records their MaxRSS and elapsed time.
+executor: slurm
+jobs: 100
+default-resources:
+  - runtime=240
+  - mem_mb=8000
+  - slurm_account=ACCOUNT
+  - slurm_partition=PARTITION
+latency-wait: 5

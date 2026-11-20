@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opcfilm"
+version = "0.1.0"
+description = "Analysis of a free-standing OPC water film."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy==2.5.3",
+    "scipy==1.18.0",
+    "pandas==3.0.5",
+    "matplotlib==3.11.1",
+    "MDAnalysis==2.10.0",
+    "netCDF4==1.7.4",
+    "parmed==4.3.1",
+    "scikit-learn==1.9.0",
+    "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+chill = ["ovito==3.16.1"]
+workflow = ["snakemake>=8,<9", "snakemake-executor-plugin-slurm"]
+
+[project.scripts]
+opcfilm = "opcfilm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

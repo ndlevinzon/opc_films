@@ -1,0 +1,204 @@
+#!/bin/bash
+#SBATCH --job-name=water_slab
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=192G
+# Account, partition, and QOS are site-specific. Example:
+#   sbatch --account=ACCOUNT --partition=PARTITION --qos=QOS minimize_equilibrate_300K.gpu
+set -x
+
+# Load the CUDA and MPI modules that match this Amber build before submitting.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if [ -z "${AMBERHOME:-}" ]; then
+    echo "Set AMBERHOME to the Amber installation prefix (the directory containing bin/pmemd.cuda)." >&2
+    exit 1
+fi
+export runpmemd="${PMEMD:-$AMBERHOME/bin/pmemd.cuda}"
+
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/resolve_inputs.sh"
+
+# Minimization for explicit solvent
+
+export SANDER=$runpmemd
+TOP="$TOPOLOGY"
+if [ -z "${COORDINATES:-}" ]; then
+    COORDINATES=$(find_up build/opc_slab.rst7 || true)
+fi
+CRD="$COORDINATES"
+if [ ! -s "$CRD" ]; then
+    echo "Set COORDINATES to the starting restart (build/opc_slab.rst7)." >&2
+    exit 1
+fi
+# Temperature
+T="300.0"
+
+# 1K step Steepest Descent Minimization with strong restraints on heavy atoms, no shake
+cat > step1.in <<EOF
+Min explicit solvent heavy atom rest no shake
+ &cntrl
+   imin = 1, ntmin = 2, maxcyc = 50000,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   ntc = 1, ntf = 1, ntb = 1, cut = 8.0,
+   igb = 0, saltcon = 0.0,
+ &end
+EOF
+
+# NTV MD with strong restraints on heavy atoms, shake, dt=.001, 15 ps
+cat > step2.in <<EOF
+MD explicit solvent heavy atom rest shake dt 0.001
+ &cntrl
+   imin = 0, nstlim = 10000, dt=0.0005,
+   ntx = 1, irest = 0, ig = -1,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 100,
+   iwrap = 1, nscm = 0,
+   ntc = 2, ntf = 2, ntb = 1, cut = 8.0,
+   ntt = 1, tautp = 0.5, temp0 = $T, tempi = $T,
+   ntp = 0, taup = 0.5,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# Steepest Descent Minimization with relaxed restraints on heavy atoms, no shake
+cat > step3.in <<EOF
+Min explicit solvent relaxed heavy atom rest no shake
+ &cntrl
+   imin = 1, ntmin = 2, maxcyc = 50000,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   ntc = 1, ntf = 1, ntb = 1, cut = 8.0,
+   ntp = 0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# Steepest Descent Minimization with minimal restraints on heavy atoms, no shake
+cat > step4.in <<EOF
+Min explicit solvent minimal heavy atom rest no shake
+ &cntrl
+   imin = 1, ntmin = 2, maxcyc = 50000,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   ntc = 1, ntf = 1, ntb = 1, cut = 8.0,
+   ntp=0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# Steepest Descent Minimization with no restraints, no shake
+cat > step5.in <<EOF
+Min explicit solvent no heavy atom res no shake
+ &cntrl
+   imin = 1, ntmin = 2, maxcyc = 50000,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   ntc = 1, ntf = 1, ntb = 1, cut = 8.0,
+   ntp=0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# NTP MD with shake and low restraints on heavy atoms, 5 ps dt=.001
+cat > step6.in <<EOF
+MD explicit solvent heavy atom low rest shake dt 0.001
+ &cntrl
+   imin = 0, nstlim = 50000, dt=0.001,
+   ntx = 1, irest = 0, ig = -1,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   iwrap = 1, nscm = 0,
+   ntc = 2, ntf = 2, ntb = 1, cut = 8.0,
+   ntt = 1, tautp = 1.0, temp0 = $T, tempi = $T,
+   ntp = 0, taup = 1.0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# NTP MD with shake and minimal restraints on heavy atoms
+cat > step7.in <<EOF
+MD explicit solvent heavy atom minimal rest shake dt 0.001, 5 ps, dt=.001
+ &cntrl
+   imin = 0, nstlim = 50000, dt=0.001,
+   ntx = 5, irest = 1,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   iwrap = 1, nscm = 0,
+   ntc = 2, ntf = 2, ntb = 0, cut = 8.0,
+   ntt = 1, tautp = 1.0, temp0 = $T, tempi = $T,
+   ntp = 0, taup = 1.0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# NTP MD with shake and minimal restraints on backbone atoms, dt=0.001, 10 ps
+cat > step8.in <<EOF
+MD water slab NVT equilibration dt 0.001
+ &cntrl
+   imin = 0, nstlim = 50000, dt=0.001,
+   ntx = 5, irest = 1,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   iwrap = 1, nscm = 0,
+   ntc = 2, ntf = 2, ntb = 1, cut = 8.0,
+   ntt = 1, tautp = 1.0, temp0 = $T,
+   ntp = 0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+# NTP MD with shake and no restraints, dt=0.002, 10 ps
+cat > step9.in <<EOF
+MD water slab NVT equilibration dt 0.002
+ &cntrl
+   imin = 0, nstlim = 500000, dt=0.002,
+   ntx = 5, irest = 1,
+   ntwx = 1000, ioutfm = 1, ntpr = 50, ntwr = 500,
+   iwrap = 1, nscm = 1000,
+   ntc = 2, ntf = 2, ntb = 1, cut = 8.0,
+   ntt = 1, tautp = 1.0, temp0 = $T,
+   ntp = 0,
+   igb = 0, saltcon = 0.0,
+   ntr = 0,
+ &end
+EOF
+
+START="`date +%s.%N`"
+
+# Minimization Phase
+for RUN in step1 step2 step3 step4 step5 ; do
+  echo "------------------------"
+  echo "Minimization phase: $RUN"
+  echo "------------------------"
+  if [[ ! -f $RUN.rst7 ]]; then
+      echo "File -- $RUN.rst7 -- does not exists. Running job..."
+      $SANDER -O -i $RUN.in -p $TOP -c $CRD -ref $CRD -o $RUN.out -x $RUN.nc -r $RUN.rst7 -inf $RUN.mdinfo
+  else
+      echo "File -- $RUN.rst7 -- exists.  Checking the next step."
+  fi
+  echo ""
+  CRD="$RUN.rst7"
+done
+
+# Equilibration phase - reference coords are last coords from minimize phase
+ REF=$CRD
+ for RUN in step6 step7 step8 step9 ; do
+
+  echo "------------------------"
+  echo "Equilibration phase: $RUN"
+  echo "------------------------"
+  if [[ ! -f $RUN.rst7 ]]; then
+      echo "File -- $RUN.rst7 -- does not exists. Running job..."
+      $SANDER -O -i $RUN.in -p $TOP -c $CRD -ref $REF -o $RUN.out -x $RUN.nc -r $RUN.rst7 -inf $RUN.mdinfo
+  else
+      echo "File -- $RUN.rst7 -- exists.  Checking the next step."
+  fi
+   echo ""
+   CRD="$RUN.rst7"
+
+ done
+
+exit 0

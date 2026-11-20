@@ -1,0 +1,94 @@
+#!/bin/bash
+#SBATCH --job-name=water_slab_prop
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=192G
+# Account, partition, and QOS are site-specific. Example:
+#   sbatch --account=ACCOUNT --partition=PARTITION --qos=QOS prop_trajectory.gpu
+#SBATCH --output=slurm/prop_%A_%a.out
+#SBATCH --error=slurm/prop_%A_%a.err
+
+set -x
+
+# Load the CUDA and MPI modules that match this Amber build before submitting.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if [ -z "${AMBERHOME:-}" ]; then
+    echo "Set AMBERHOME to the Amber installation prefix (the directory containing bin/pmemd.cuda)." >&2
+    exit 1
+fi
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/resolve_inputs.sh"
+if [ -z "${START_RST:-}" ]; then
+    echo "Set START_RST. A hold must not fall back to min/step9.rst7." >&2
+    exit 1
+fi
+if [ -z "${MDIN:-}" ]; then
+    echo "Set MDIN to the hold input. hold_from_cooling.py writes cut = 9.0. The archived prop_trajectory.mdin is cut = 8.0 and is not the default." >&2
+    exit 1
+fi
+
+# Directory for output files
+DIR="OUT"
+
+# --------------------------------------------------
+# RUN AMBER
+# --------------------------------------------------
+
+if [ "$(ls -A $DIR 2>/dev/null)" ]; then
+    cur=$(perl "$SCRIPT_DIR/next-RST.perl" | tail -1)
+    pre=$(expr $cur - 1)
+
+    touch RST/*
+    touch TRAJ/*
+    touch OUT/*
+
+    if [ -z "${MDIN:-}" ]; then
+        echo "Set MDIN to the hold input. hold_from_cooling.py writes cut = 9.0. The archived prop_trajectory.mdin is cut = 8.0 and is not the default." >&2
+        exit 1
+    fi
+    $AMBERHOME/bin/pmemd.cuda -O -i "$MDIN" \
+        -o OUT/mdout.$cur \
+        -p "$TOPOLOGY" \
+        -c RST/rst.$pre \
+        -r RST/rst.$cur \
+        -x TRAJ/traj.$cur \
+        -inf mdinfo &
+else
+    mkdir -p OUT RST TRAJ
+    if [ ! -s "$START_RST" ]; then
+        echo "Set START_RST to the equilibrated restart (min/step9.rst7)." >&2
+        exit 1
+    fi
+    if [ -z "${MDIN:-}" ]; then
+        echo "Set MDIN to the hold input. hold_from_cooling.py writes cut = 9.0. The archived prop_trajectory.mdin is cut = 8.0 and is not the default." >&2
+        exit 1
+    fi
+
+    $AMBERHOME/bin/pmemd.cuda -O -i "$MDIN" \
+        -o OUT/mdout.1 \
+        -p "$TOPOLOGY" \
+        -c "$START_RST" \
+        -r RST/rst.1 \
+        -x TRAJ/traj.1 \
+        -inf mdinfo &
+fi
+
+PMEMD_PID=$!
+
+wait "$PMEMD_PID"
+PMEMD_STATUS=$?
+
+if [ "$PMEMD_STATUS" -eq 0 ]; then
+    echo "AMBER finished normally. Submitting next job."
+    extra=()
+    if [ -n "${SLURM_JOB_ACCOUNT:-}" ]; then extra+=(--account="$SLURM_JOB_ACCOUNT"); fi
+    if [ -n "${SLURM_JOB_PARTITION:-}" ]; then extra+=(--partition="$SLURM_JOB_PARTITION"); fi
+    if [ -n "${SLURM_JOB_QOS:-}" ]; then extra+=(--qos="$SLURM_JOB_QOS"); fi
+    sbatch --export=ALL "${extra[@]}" "$0"
+else
+    echo "AMBER exited with status $PMEMD_STATUS. Not resubmitting."
+    exit "$PMEMD_STATUS"
+fi

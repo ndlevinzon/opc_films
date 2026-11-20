@@ -1,0 +1,224 @@
+#!/bin/bash
+#SBATCH --job-name=water_slab_ramp
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=192G
+# Account, partition, and QOS are site-specific. Example:
+#   sbatch --account=ACCOUNT --partition=PARTITION --qos=QOS \
+#       --export=ALL,COOL_NS=50 cool_300K_to_78K_nvt.gpu
+
+set -e
+set -o pipefail
+set -x
+
+# Load the CUDA and MPI modules that match this Amber build before submitting.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if [ -z "${AMBERHOME:-}" ]; then
+    echo "Set AMBERHOME to the Amber installation prefix (the directory containing bin/pmemd.cuda)." >&2
+    exit 1
+fi
+PMEMD="${PMEMD:-$AMBERHOME/bin/pmemd.cuda}"
+
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/resolve_inputs.sh"
+
+mkdir -p OUT RST TRAJ MDIN LOGS
+
+# ============================================================
+# COOLING SCHEDULE
+# ============================================================
+
+# Finer temperature windows to reduce box/grid changes per chunk.
+# Previous coarse schedule:
+# temps=(300 250 200 160 130 100 78)
+#
+# New 10 K window schedule:
+temps=(300 290 280 270 260 250 240 230 220 210 200 190 180 170 160 150 140 130 120 110 100 90 80 78)
+
+# Total planned cooling duration in ns.
+# Options:
+#   COOL_NS=2   -> 111 K/ns
+#   COOL_NS=5   -> 44 K/ns
+#   COOL_NS=10  -> 22 K/ns
+#   COOL_NS=20  -> 11 K/ns
+#   COOL_NS=50  -> 4.4 K/ns
+#
+# Submit with COOL_NS set to the total cooling time:
+#   2 ns -> 111 K/ns, 5 ns -> 44.4 K/ns, 10 ns -> 22.2 K/ns,
+#   20 ns -> 11.1 K/ns, 50 ns -> 4.44 K/ns.
+#   sbatch --export=ALL,COOL_NS=50 cool_300K_to_78K_nvt.gpu
+#
+COOL_NS=${COOL_NS:-10}
+
+case "$COOL_NS" in
+    2|5|10|20|50)
+        ;;
+    *)
+        echo "ERROR: COOL_NS must be one of: 2, 5, 10, 20, 50"
+        exit 1
+        ;;
+esac
+
+T_INITIAL=300
+T_FINAL=78
+TOTAL_DELTA_T=$((T_INITIAL - T_FINAL))
+
+# MD timestep in ps
+DT_PS=0.002
+
+# Steps per ns: 1000 ps/ns / 0.002 ps = 500000 steps/ns
+STEPS_PER_NS=$(awk -v dt="$DT_PS" 'BEGIN {printf "%.0f", 1000.0/dt}')
+
+# Which chunk are we running?
+chunk=${CHUNK:-0}
+
+n_chunks=$((${#temps[@]} - 1))
+
+if [ "$chunk" -ge "$n_chunks" ]; then
+    echo "All cooling chunks are complete."
+    exit 0
+fi
+
+TSTART=${temps[$chunk]}
+TEND=${temps[$((chunk + 1))]}
+
+DELTA_T=$((TSTART - TEND))
+
+# Duration of this chunk in ns.
+# This keeps the cooling rate constant across chunks even though
+# the temperature intervals are not all the same size.
+CHUNK_NS=$(awk -v cool_ns="$COOL_NS" \
+              -v dT="$DELTA_T" \
+              -v total_dT="$TOTAL_DELTA_T" \
+              'BEGIN {printf "%.6f", cool_ns * dT / total_dT}')
+
+# Number of MD steps in this chunk
+NSTLIM=$(awk -v chunk_ns="$CHUNK_NS" \
+            -v steps_per_ns="$STEPS_PER_NS" \
+            'BEGIN {printf "%.0f", chunk_ns * steps_per_ns}')
+
+# Actual cooling rate for reporting
+COOL_RATE=$(awk -v dT="$TOTAL_DELTA_T" \
+               -v cool_ns="$COOL_NS" \
+               'BEGIN {printf "%.2f", dT / cool_ns}')
+
+rate_tag=$(printf "cool_%sns" "$COOL_NS")
+stage=$(printf "%s_chunk_%02d_%03d_to_%03dK" "$rate_tag" "$chunk" "$TSTART" "$TEND")
+
+echo "============================================================"
+echo "Running cooling chunk $chunk / $((n_chunks - 1))"
+echo "Temperature: ${TSTART} K -> ${TEND} K"
+echo "Total cooling duration: ${COOL_NS} ns"
+echo "Average cooling rate: ${COOL_RATE} K/ns"
+echo "This chunk temperature drop: ${DELTA_T} K"
+echo "This chunk duration: ${CHUNK_NS} ns"
+echo "This chunk nstlim: ${NSTLIM} steps"
+echo "Stage: $stage"
+echo "============================================================"
+
+# ============================================================
+# INPUT RESTART
+# ============================================================
+
+if [ "$chunk" -eq 0 ]; then
+    if [ -z "${START_RST:-}" ]; then
+        START_RST=$(find_up min/step9.rst7 || true)
+    fi
+    INPUT_RST="$START_RST"
+else
+    prev_chunk=$((chunk - 1))
+    TPREV=${temps[$prev_chunk]}
+    prev_stage=$(printf "%s_chunk_%02d_%03d_to_%03dK" "$rate_tag" "$prev_chunk" "$TPREV" "$TSTART")
+    INPUT_RST="RST/${prev_stage}.rst7"
+fi
+
+if [ ! -s "$INPUT_RST" ]; then
+    echo "ERROR: input restart not found: $INPUT_RST"
+    exit 1
+fi
+
+# ============================================================
+# WRITE MDIN FOR THIS CHUNK
+# ============================================================
+
+cat > "MDIN/${stage}.mdin" << EOF
+NVT cooling ${TSTART} K to ${TEND} K
+&cntrl
+  imin=0,
+  irest=1,
+  ntx=5,
+
+  nstlim=${NSTLIM},
+  dt=0.002,
+
+  ntc=2,
+  ntf=2,
+  cut=9.0,
+
+  ntb=1
+  ntp=0
+
+  ntt=3,
+  gamma_ln=2.0,
+
+  tempi=${TSTART}.0,
+  temp0=${TSTART}.0,
+
+  nmropt=1,
+
+  ig=-1,
+
+  ntpr=1000,
+  ntwx=1000,
+  ntwr=5000,
+  ioutfm=1,
+  ! No iwrap and no nscm. The hold input sets both. Analyses unwrap or recentre.
+/
+
+&wt TYPE='TEMP0', istep1=0, istep2=${NSTLIM}, value1=${TSTART}.0, value2=${TEND}.0 /
+&wt TYPE='END' /
+EOF
+
+# ============================================================
+# RUN THIS CHUNK
+# ============================================================
+
+$PMEMD -O \
+    -i "MDIN/${stage}.mdin" \
+    -o "OUT/${stage}.mdout" \
+    -p "$TOPOLOGY" \
+    -c "$INPUT_RST" \
+    -r "RST/${stage}.rst7" \
+    -x "TRAJ/${stage}.nc" \
+    -inf "OUT/${stage}.mdinfo"
+
+if [ ! -s "RST/${stage}.rst7" ]; then
+    echo "ERROR: RST/${stage}.rst7 was not created."
+    exit 1
+fi
+
+echo "Completed $stage"
+
+# ============================================================
+# SUBMIT NEXT CHUNK AS A NEW SLURM JOB
+# ============================================================
+
+next_chunk=$((chunk + 1))
+
+if [ "$next_chunk" -lt "$n_chunks" ]; then
+    echo "Submitting next chunk: $next_chunk"
+
+    extra=()
+    if [ -n "${SLURM_JOB_ACCOUNT:-}" ]; then extra+=(--account="$SLURM_JOB_ACCOUNT"); fi
+    if [ -n "${SLURM_JOB_PARTITION:-}" ]; then extra+=(--partition="$SLURM_JOB_PARTITION"); fi
+    if [ -n "${SLURM_JOB_QOS:-}" ]; then extra+=(--qos="$SLURM_JOB_QOS"); fi
+    sbatch \
+        "${extra[@]}" \
+        --export=ALL,CHUNK="$next_chunk",COOL_NS="$COOL_NS" \
+        "$0"
+else
+    echo "All cooling chunks complete."
+fi

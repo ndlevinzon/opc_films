@@ -1,0 +1,35 @@
+NVT cooling {{ temperature_start_K }} K to {{ temperature_end_K }} K
+&cntrl
+  imin=0,
+  irest=1,
+  ntx=5,
+
+  nstlim={{ nstlim }},
+  dt={{ dt }},
+
+  ntc=2,
+  ntf=2,
+  cut={{ cut }},
+
+  ntb=1
+  ntp=0
+
+  ntt=3,
+  gamma_ln={{ gamma_ln }},
+
+  tempi={{ temperature_start_K }},
+  temp0={{ temperature_start_K }},
+
+  nmropt=1,
+
+  ig=-1,
+
+  ntpr=1000,
+  ntwx={{ ntwx }},
+  ntwr=5000,
+  ioutfm=1,
+  ! No iwrap and no nscm. The hold input sets both.
+/
+
+&wt TYPE='TEMP0', istep1=0, istep2={{ nstlim }}, value1={{ temperature_start_K }}, value2={{ temperature_end_K }} /
+&wt TYPE='END' /

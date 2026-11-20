@@ -1,0 +1,118 @@
+# Single parameter sheet for the OPC film analysis.
+# Scripts read this file. A command-line override is allowed only for a
+# sensitivity run and is written into that run's metadata.
+
+film:
+  # Directory names under opc/. The catalog and the path regular expressions read this list.
+  replicas: [r1, r2, r3]
+  n_water: 139000
+  box_A: [194.567, 188.781, 300.0]
+  water_molar_mass_g_mol: 18.01528
+  number_density_divisor: 0.602214076
+  avogadro_per_mol: 6.02214076e23
+  dt_ps: 0.002
+
+regions:
+  bulk_halfwidth_A: 15.0
+  awi_A: [3.0, 12.0]
+  awi_outer_A: [0.0, 6.0]
+  sensitivity_bands_A: [[2.0, 10.0], [4.0, 14.0]]
+  names: [interior, awi, awi_outer]
+
+profile:
+  bin_A: 0.25
+  region_bin_A: 0.5
+  smooth_sigma_A: 1.0
+
+hbond:
+  oo_cutoff_A: 3.5
+  angle_deg: 150.0
+  lags_ps: [10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0]
+  comparison_lag_ps: 320.0
+  origins: 16
+
+qstar:
+  json: outputs/qstar.json
+  adopted_Ainv: 1.925
+  tolerance_Ainv: 0.025
+  grid_spacing_A: 0.5
+  peak_min_Ainv: 1.5
+  peak_max_Ainv: 2.3
+  peak_window_Ainv: 0.15
+  # Rows whose measured peaks may enter outputs/qstar.json.
+  # opcfilm qstar adopt is the only writer of that file.
+  adopt_from:
+    kinds: [hold]
+    temperature_min_K: 150.0
+    temperature_max_K: 250.0
+
+dynamics:
+  cooling_lag_cap_K: 2.0
+  hold_lag_fraction: 0.25
+  cooling_lags_ps: [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0]
+  origins: 48
+  references_per_region: 128
+  event_window_ps: 20.0
+
+discard:
+  hold_fraction: 0.10
+  ramp_fraction: 0.0
+
+classifier:
+  liquid_K: 300.0
+  glass_K: 78.0
+  bulk_halfwidth_A: 15.0
+  frames: 20
+  threshold: 0.5
+  scheme: leave_one_replica_out
+  scale_mad: 1.4826
+  covariance_jitter: 1.0e-6
+
+probe:
+  radius_A: 0.80
+  sensitivity_radii_A: [0.0, 0.5, 1.2]
+  oxygen_exclusion_A: 1.52
+  n_probes: 4000
+
+arrhenius:
+  window_K: [210.0, 230.0]
+  sensitivity_lower_K: [200.0, 190.0, 180.0]
+  gas_constant_J_mol_K: 8.31446261815324
+
+energy:
+  bin_K: 2.0
+  f_scale_kcal_mol_per_water: 0.001
+  fit_min_K: 120.0
+  fit_max_K: 300.0
+  glass_min_K: 120.0
+  glass_max_K: 180.0
+  liquid_min_K: 256.0
+  liquid_max_K: 300.0
+  report_K: 78.0
+
+uncertainty:
+  curve_band_sd: 1.0
+  contrast: bulk_minus_awi
+  paired_confidence: 0.95
+
+seeds:
+  cooling_chunk: 741
+  local_order: 12345
+  hydrogen_bond_free_oh: 7347
+  hydrogen_bond_persistence: 7231
+  regional_dynamics: 20261022
+  energetic_comparison: 20261016
+  classifier: 20261120
+
+trajectory:
+  cooling_ntwx: 1000
+  hold_ntwx: 5000
+  cooling_frame_ps: 2.0
+  hold_frame_ps: 10.0
+  production_cut_A: 9.0
+  equilibration_cut_A: 8.0
+  gamma_ln_per_ps: 2.0
+  # The three replicas start cooling from the same min/step9.rst7 and differ by ig = -1.
+  # At 300 K that shared start decorrelates within picoseconds.
+
+censoring: [resolved, fast_censored, slow_censored]

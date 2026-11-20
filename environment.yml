@@ -1,0 +1,26 @@
+# Analysis environment. Versions below are the ones in environment.txt or
+# pyproject.toml. pmemd.cuda is not a conda package in that list; it is the
+# AMBERHOME binary on the machine that ran the trajectories, and its version
+# is not recorded there. The Snakemake SLURM executor plugin version is also
+# absent from environment.txt, so it is not pinned.
+name: opcfilm
+channels:
+  - conda-forge
+  - https://conda.ovito.org
+dependencies:
+  - python=3.12
+  - ambertools=26.0
+  - ovito=3.16.1
+  - numpy=2.5.3
+  - scipy=1.18.0
+  - pandas=3.0.5
+  - matplotlib=3.11.1
+  - mdanalysis=2.10.0
+  - netcdf4=1.7.4
+  - parmed=4.3.1
+  - scikit-learn=1.9.0
+  - pyyaml=6.0.3
+  - pip
+  - pip:
+      - snakemake>=8,<9
+      - snakemake-executor-plugin-slurm

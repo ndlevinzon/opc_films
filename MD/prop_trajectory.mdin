@@ -1,0 +1,45 @@
+OPC slab fixed-temperature NVT propagation at TEMP K
+! This file is the archived continuation input. temp0 is 300 K and nstlim is
+! unlimited, so a hold is not specified here. Use hold_from_cooling.py.
+! Cooling windows (cool_300K_to_78K_nvt.gpu) use cut=9.0 and set neither
+! iwrap nor nscm. This file wraps coordinates and removes COM motion.
+! The analyses unwrap or recentre, so both inputs can be read.
+! All three replicas start cooling from min/step9.rst7 and differ by ig=-1.
+! At 300 K that decorrelates within picoseconds.
+&cntrl
+  imin     = 0,
+  irest    = 1,
+  ntx      = 5,
+
+  ! 20 ns at 2 fs
+  nstlim   = 999999999,
+  dt       = 0.002,
+
+  ntc      = 2,
+  ntf      = 2,
+  cut      = 8.0,
+
+  ! NVT ensemble
+  ntb      = 1,
+  ntp      = 0,
+
+  ! Langevin thermostat
+  ntt      = 3,
+  gamma_ln = 2.0,
+  temp0    = 300,
+  tempi    = 300,
+  ig       = -1,
+
+  ! Output
+  ntpr     = 1000,
+  ntwx     = 5000,
+  ntwr     = 50000,
+  ioutfm   = 1,
+
+  ! Coordinate handling
+  iwrap    = 1,
+  nscm     = 1000,
+
+  ntr      = 0,
+  timlim   = 28750,
+&end

@@ -1,0 +1,228 @@
+"""Phase A graph.
+
+``config/manifest.tsv`` is a reviewed input. This file reads it and does not
+rebuild it. Each rule calls an existing analysis script. ``opcfilm s00`` is
+not on this path. Row numbers are the 1-based manifest lines those scripts
+already accept as ``--row``.
+"""
+
+from pathlib import Path
+
+import pandas as pd
+
+MANIFEST = "config/manifest.tsv"
+M = pd.read_csv(MANIFEST, sep="\t", dtype=str, keep_default_na=False)
+M["row"] = [str(i) for i in range(1, len(M) + 1)]
+A = "analysis"
+F = "results/flags"
+
+
+def rows(*kinds, tmin=None, tmax=None):
+    """Manifest line numbers for the requested kinds and temperatures.
+
+    Parameters
+    ----------
+    kinds : str
+        ``ramp``, ``hold``, or ``endpoint``.
+    tmin, tmax : float, optional
+        Inclusive temperature limits.
+
+    Returns
+    -------
+    list of str
+        1-based row numbers.
+    """
+    if M.empty or "kind" not in M.columns:
+        return []
+    selected = M[M.kind.isin(kinds)]
+    if tmin is not None and not selected.empty:
+        selected = selected[selected.temperature_K.astype(float) >= tmin]
+    if tmax is not None and not selected.empty:
+        selected = selected[selected.temperature_K.astype(float) <= tmax]
+    return list(selected.row)
+
+
+RAMP, HOLD, END = rows("ramp"), rows("hold"), rows("endpoint")
+QSTAR_ROWS = rows("hold", tmin=150, tmax=250)
+
+
+wildcard_constraints:
+    row=r"\d+"
+
+
+rule all:
+    input:
+        MANIFEST if M.empty else f"{F}/figures.done",
+
+
+rule profiles:
+    output:
+        touch(f"{F}/profiles/{{row}}.done"),
+    log:
+        "logs/profiles/{row}.log",
+    resources:
+        cpus_per_task=4,
+        mem_mb=32000,
+        runtime=720,
+    shell:
+        "python {A}/cooling_path/03_run_row.py --manifest {MANIFEST} --row {wildcards.row} > {log} 2>&1"
+
+
+rule capillary:
+    output:
+        touch(f"{F}/capillary/{{row}}.done"),
+    log:
+        "logs/capillary/{row}.log",
+    resources:
+        cpus_per_task=4,
+        mem_mb=32000,
+        runtime=720,
+    shell:
+        "python {A}/cooling_path/03_run_row.py --manifest {MANIFEST} --row {wildcards.row} --capwave > {log} 2>&1"
+
+
+rule qstar_row:
+    output:
+        "results/qstar_row/{row}/qstar_row.json",
+    log:
+        "logs/qstar_row/{row}.log",
+    resources:
+        cpus_per_task=4,
+        mem_mb=32000,
+        runtime=720,
+    shell:
+        "bash workflow/reduce/qstar_row.sh {wildcards.row} > {log} 2>&1"
+
+
+rule qstar_adopt:
+    input:
+        expand("results/qstar_row/{row}/qstar_row.json", row=QSTAR_ROWS),
+    output:
+        "outputs/qstar.json",
+    log:
+        "logs/qstar_adopt.log",
+    shell:
+        "opcfilm qstar adopt {input} --out {output} > {log} 2>&1"
+
+
+rule fs_tau:
+    input:
+        "outputs/qstar.json",
+    output:
+        touch(f"{F}/fs_tau/{{row}}.done"),
+    log:
+        "logs/fs_tau/{row}.log",
+    resources:
+        cpus_per_task=8,
+        mem_mb=64000,
+        runtime=1440,
+    shell:
+        "bash workflow/reduce/fs_tau_row.sh {wildcards.row} > {log} 2>&1"
+
+
+rule regional_dyn:
+    input:
+        "outputs/qstar.json",
+    output:
+        touch(f"{F}/regional_dyn/{{row}}.done"),
+    params:
+        hold=lambda wildcards: "--hold" if M.loc[int(wildcards.row) - 1, "kind"] != "ramp" else "",
+    log:
+        "logs/regional_dyn/{row}.log",
+    resources:
+        cpus_per_task=8,
+        mem_mb=64000,
+        runtime=1440,
+    shell:
+        "python {A}/interface_dynamics/analyze_v2.py --manifest {MANIFEST} "
+        "--row {wildcards.row} {params.hold} > {log} 2>&1"
+
+
+# hbond, defects, qstar_adopt, and the reductions use the profile defaults
+# (8 GB, 4 h) until a canary sacct records MaxRSS and elapsed time.
+rule hbond:
+    input:
+        f"{F}/regional_dyn/{{row}}.done",
+    output:
+        touch(f"{F}/hbond/{{row}}.done"),
+    log:
+        "logs/hbond/{row}.log",
+    shell:
+        "python {A}/interface_dynamics/run_hb_manifest.py --manifest {MANIFEST} --row {wildcards.row} > {log} 2>&1"
+
+
+rule defects:
+    output:
+        touch(f"{F}/defects/{{row}}.done"),
+    log:
+        "logs/defects/{row}.log",
+    shell:
+        "python {A}/interface_dynamics/hydrogen_bonds/02_run_row.py --manifest {MANIFEST} "
+        "--row {wildcards.row} --outroot results/defects > {log} 2>&1"
+
+
+rule classifier:
+    output:
+        touch(f"{F}/classifier.done"),
+    log:
+        "logs/classifier.log",
+    resources:
+        cpus_per_task=16,
+        mem_mb=128000,
+        runtime=2880,
+    shell:
+        "python {A}/glass_structure/opc_vitrification_spatial_workflow/07_core_awi_lda_and_free_volume.py "
+        "--manifest {MANIFEST} --outdir results/classifier > {log} 2>&1"
+
+
+rule tg_dyn:
+    input:
+        expand(f"{F}/fs_tau/{{row}}.done", row=HOLD + END),
+    output:
+        touch(f"{F}/tg_dyn.done"),
+    log:
+        "logs/tg_dyn.log",
+    shell:
+        "bash workflow/reduce/tg_dyn.sh > {log} 2>&1"
+
+
+rule energy_arrest:
+    input:
+        expand(f"{F}/profiles/{{row}}.done", row=RAMP),
+    output:
+        touch(f"{F}/energy_arrest.done"),
+    log:
+        "logs/energy_arrest.log",
+    shell:
+        "bash workflow/reduce/energy_arrest.sh > {log} 2>&1"
+
+
+rule compare_arrest:
+    input:
+        f"{F}/tg_dyn.done",
+        f"{F}/energy_arrest.done",
+    output:
+        touch(f"{F}/compare_arrest.done"),
+    log:
+        "logs/compare_arrest.log",
+    shell:
+        "bash workflow/reduce/compare_arrest.sh > {log} 2>&1"
+
+
+rule figures:
+    input:
+        [
+            f"{F}/tg_dyn.done",
+            f"{F}/energy_arrest.done",
+            f"{F}/compare_arrest.done",
+            f"{F}/classifier.done",
+            expand(f"{F}/capillary/{{row}}.done", row=HOLD),
+            expand(f"{F}/hbond/{{row}}.done", row=RAMP + HOLD),
+            expand(f"{F}/defects/{{row}}.done", row=RAMP + HOLD),
+        ],
+    output:
+        touch(f"{F}/figures.done"),
+    log:
+        "logs/figures.log",
+    shell:
+        "bash workflow/reduce/figures.sh > {log} 2>&1"

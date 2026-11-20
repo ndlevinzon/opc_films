@@ -1,0 +1,32 @@
+OPC slab NVT hold at {{ temperature_K }} K, continued from the cooling restart
+&cntrl
+  imin     = 0,
+  irest    = 1,
+  ntx      = 5,
+
+  nstlim   = {{ nstlim }},
+  dt       = {{ dt }},
+
+  ntc      = 2,
+  ntf      = 2,
+  cut      = {{ cut }},
+
+  ntb      = 1,
+  ntp      = 0,
+
+  ntt      = 3,
+  gamma_ln = {{ gamma_ln }},
+  temp0    = {{ temperature_K }},
+  tempi    = {{ temperature_K }},
+  ig       = -1,
+
+  ntpr     = 1000,
+  ntwx     = {{ ntwx }},
+  ntwr     = 50000,
+  ioutfm   = 1,
+
+  iwrap    = 1,
+  nscm     = 1000,
+
+  ntr      = 0,
+&end
