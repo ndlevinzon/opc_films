@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 chill = ["ovito==3.16.1"]
-workflow = ["snakemake>=8,<9", "snakemake-executor-plugin-slurm"]
+workflow = ["snakemake>=9.6,<10", "snakemake-executor-plugin-slurm"]
 
 [project.scripts]
 opcfilm = "opcfilm.cli:main"

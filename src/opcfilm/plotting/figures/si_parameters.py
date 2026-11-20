@@ -34,7 +34,7 @@ def draw(argv=None):
         "cpptraj is the AmberTools binary. `pmemd.cuda` is the `AMBERHOME` "
         "binary that ran the trajectories; its version is not in "
         "`environment.txt`, so it is not stated here. Snakemake is "
-        "`snakemake>=8,<9`. The SLURM executor plugin version is not in "
+        "`snakemake>=9.6,<10`. The SLURM executor plugin version is not in "
         "`environment.txt`.\n",
         encoding="utf-8",
     )
