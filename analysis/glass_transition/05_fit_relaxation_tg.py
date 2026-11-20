@@ -786,7 +786,7 @@ def main():
             ),
             s=45,
             alpha=0.65,
-            label=f"Replica {int(r)}"
+            label=f"Replica {r}"
         )
 
 

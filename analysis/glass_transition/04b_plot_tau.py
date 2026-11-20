@@ -423,7 +423,7 @@ def plot_replica_scatter(df, out_prefix):
                 marker="o",
                 linewidth=1.3,
                 markersize=6,
-                label=f"Replica {int(r)}"
+                label=f"Replica {r}"
             )
 
         # Censored points kept visible,
@@ -681,7 +681,7 @@ def plot_stationarity(
                 marker="o",
                 linewidth=1.4,
                 markersize=6,
-                label=f"Replica {int(r)}"
+                label=f"Replica {r}"
             )
 
     # Original Stage-3 stationarity criterion
