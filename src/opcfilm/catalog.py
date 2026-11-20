@@ -901,8 +901,12 @@ def discover_rows(root, workflow, topology, replicas, rate_codes):
     list of dict
         Manifest rows. A ramp is one cooling window. A hold or an endpoint is
         one setpoint: every ``traj.N`` in that directory is one row, in
-        numeric order. A ramp whose name has no temperature window keeps a
-        blank ``temperature_K``.
+        numeric order. The same rows are also read from
+        ``opc/<replica>/ramp_nvt/<code>K_ns/prop/<T>K``, the layout written
+        by ``prop_trajectory.gpu``. A centred copy beside ``TRAJ/`` is not a
+        segment. The sheet's liquid and glass temperatures are endpoints.
+        A ramp whose name has no temperature window keeps a blank
+        ``temperature_K``.
     """
     root = Path(root)
     rows = []
@@ -917,6 +921,7 @@ def discover_rows(root, workflow, topology, replicas, rate_codes):
                 else:
                     start = end = midpoint = ""
                 rows.append(_row("ramp", replica, trajectory, topology, workflow, rate, start, end, midpoint))
+        rows.extend(_prop_rows(root, workflow, topology, replica, rate_codes))
         for kind, folder in (("hold", "hold"), ("endpoint", "endpoint")):
             base = root / "opc" / replica / folder
             if not base.is_dir():
@@ -929,7 +934,98 @@ def discover_rows(root, workflow, topology, replicas, rate_codes):
                 rows.append(_continuation_row(
                     kind, replica, trajectories, topology, workflow, temperature,
                 ))
+    _require_unique(rows)
     return rows
+
+
+def _endpoint_temperatures():
+    """Setpoints that are classifier endpoints, read from the sheet.
+
+    Returns
+    -------
+    set of int
+        ``classifier.liquid_K`` and ``classifier.glass_K``, in kelvin.
+    """
+    from opcfilm.config import CONFIG
+
+    return {int(round(CONFIG.classifier.liquid_K)), int(round(CONFIG.classifier.glass_K))}
+
+
+def _prop_rows(root, workflow, topology, replica, rate_codes):
+    """Holds and endpoints stored as ``opc/<rep>/ramp_nvt/<code>K_ns/prop/<T>K``.
+
+    This is the layout ``prop_trajectory.gpu`` produces when it is run inside
+    a cooling-rate directory. Only ``TRAJ/traj.N`` files are segments, so a
+    centred or re-imaged copy left in the setpoint directory is ignored. The
+    300 K and 78 K setpoints (``classifier.liquid_K`` and ``glass_K``) are
+    endpoints; every other setpoint is a hold.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        Data root containing ``opc/``.
+    workflow : pathlib.Path
+        Directory under which ``outputs/`` is created.
+    topology : pathlib.Path
+        Amber topology recorded on every row.
+    replica : str
+        Replica directory name.
+    rate_codes : sequence of int
+        Cooling-rate directory codes to search.
+
+    Returns
+    -------
+    list of dict
+        One row per setpoint directory that has at least one ``traj.N``.
+    """
+    endpoints = _endpoint_temperatures()
+    rows = []
+    for rate in rate_codes:
+        base = Path(root) / "opc" / replica / "ramp_nvt" / f"{rate}K_ns" / "prop"
+        if not base.is_dir():
+            continue
+        for setpoint in sorted(base.iterdir()):
+            match = _SETPOINT_DIR.fullmatch(setpoint.name)
+            if not match or not setpoint.is_dir():
+                continue
+            segments = [
+                path for path in (setpoint / "TRAJ").glob("traj.*")
+                if _SEGMENT.search(path.name)
+            ] if (setpoint / "TRAJ").is_dir() else []
+            if not segments:
+                continue
+            temperature = match.group(1)
+            kind = "endpoint" if int(temperature) in endpoints else "hold"
+            rows.append(_continuation_row(
+                kind, replica, segments, topology, workflow, temperature,
+            ))
+    return rows
+
+
+def _require_unique(rows):
+    """Fail when one replica has two holds or endpoints at the same setpoint.
+
+    Parameters
+    ----------
+    rows : sequence of dict
+        Manifest rows already discovered for every replica.
+
+    Raises
+    ------
+    ValueError
+        If the same replica has two holds, or two endpoints, at one temperature.
+    """
+    seen = {}
+    for row in rows:
+        if row["kind"] not in ("hold", "endpoint"):
+            continue
+        key = (row["kind"], row["replica"], row["temperature_K"])
+        if key in seen:
+            raise ValueError(
+                f"Two {key[0]} rows for {key[1]} at {key[2]} K: "
+                f"{seen[key]} and {row['files'].split(';')[0]}. Keep one layout."
+            )
+        seen[key] = row["files"].split(";")[0]
 
 
 def load_manifest(path):
