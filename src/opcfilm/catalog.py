@@ -281,7 +281,7 @@ import re
 from pathlib import Path
 
 from opcfilm.config import CONFIG, HOLD_DISCARD_FRACTION
-from opcfilm.io.mdout import time_span_ps
+from opcfilm.io.mdout import summarize_mdout
 
 REPLICAS = tuple(str(name) for name in CONFIG.film.replicas)
 
@@ -304,12 +304,9 @@ COLUMNS = [
     "duration_ps",
     "mdout",
 ]
-_NTWX = re.compile(r"(?m)^\s*ntwx\s*=\s*([0-9]+)")
-_DT = re.compile(r"(?m)^\s*dt\s*=\s*([0-9]*\.?[0-9]+)")
 KINDS = ("ramp", "hold", "endpoint")
 _WINDOW = re.compile(r"(\d{2,3})_to_(\d{2,3})K")
 _SETPOINT = re.compile(r"(\d{2,3})K")
-_CUT = re.compile(r"(?m)^\s*cut\s*=\s*([0-9]*\.?[0-9]+)")
 
 
 
@@ -329,15 +326,8 @@ def _frame_from_mdout(path):
     """
     if path is None:
         return "", ""
-    text = Path(path).read_text(errors="replace")
-    head = re.split(r"A\s+V\s+E\s+R\s+A\s+G\s+E\s+S", text, maxsplit=1, flags=re.I)[0]
-    ntwx = _NTWX.findall(head)
-    dt = _DT.findall(head)
-    if not ntwx:
-        return "", ""
-    if not dt:
-        return ntwx[-1], ""
-    return ntwx[-1], f"{float(ntwx[-1]) * float(dt[-1]):g}"
+    summary = summarize_mdout(path)
+    return summary["ntwx"], summary["frame_ps"]
 
 
 def _with_aliases(row):
@@ -509,12 +499,10 @@ def read_cut(path):
     ValueError
         If the header does not contain ``cut``.
     """
-    text = Path(path).read_text(errors="replace")
-    head = re.split(r"A\s+V\s+E\s+R\s+A\s+G\s+E\s+S", text, maxsplit=1, flags=re.I)[0]
-    found = _CUT.findall(head)
-    if not found:
+    summary = summarize_mdout(path)
+    if summary["cut"] is None:
         raise ValueError(f"{path} does not echo a cut value.")
-    return float(found[-1])
+    return summary["cut"]
 
 
 def cutoff_note(rows):
@@ -562,7 +550,6 @@ def cutoff_note(rows):
     return "Cutoff values are only present for some manifest kinds."
 
 
-_INPCRD = re.compile(r"INPCRD:\s*(\S+)")
 _SEGMENT = re.compile(r"\.(\d+)$")
 _SETPOINT_DIR = re.compile(r"(\d{2,3})K$")
 _RESTART_PREFIX = re.compile(r"cool_(\d+)ns_chunk_")
@@ -582,10 +569,7 @@ def read_inpcrd(path):
     str
         The restart path, or ``""`` when the header does not echo one.
     """
-    text = Path(path).read_text(errors="replace")
-    head = re.split(r"A\s+V\s+E\s+R\s+A\s+G\s+E\s+S", text, maxsplit=1, flags=re.I)[0]
-    found = _INPCRD.findall(head)
-    return found[-1] if found else ""
+    return summarize_mdout(path)["inpcrd"]
 
 
 def _segment_index(path):
@@ -741,18 +725,17 @@ def _row(kind, replica, trajectory, topology, workflow, rate_code, start, end, t
     mdout = _mdout_for(trajectory)
     cut = ""
     duration = ""
+    ntwx, frame_ps = "", ""
     if mdout is not None:
-        try:
-            cut = f"{read_cut(mdout):g}"
-        except ValueError:
-            cut = ""
-        span = time_span_ps(mdout)
-        if span is not None:
-            duration = f"{span:g}"
+        summary = summarize_mdout(mdout)
+        if summary["cut"] is not None:
+            cut = f"{summary['cut']:g}"
+        if summary["duration_ps"] is not None:
+            duration = f"{summary['duration_ps']:g}"
+        ntwx, frame_ps = summary["ntwx"], summary["frame_ps"]
+        if not restart:
+            restart = summary["inpcrd"]
     label = trajectory.stem
-    if not restart and mdout is not None:
-        restart = read_inpcrd(mdout)
-    ntwx, frame_ps = _frame_from_mdout(mdout)
     fraction = discard_fraction_for(kind)
     discard_ps = ""
     if duration != "":
@@ -816,26 +799,19 @@ def _continuation_row(kind, replica, trajectories, topology, workflow, temperatu
     missing = [str(path) for path, mdout in zip(ordered, mdouts) if mdout is None]
     if missing:
         raise FileNotFoundError(f"Segments without mdout: {missing}")
-    cuts = []
-    spacings = []
+    summaries = [summarize_mdout(mdout) for mdout in mdouts]
+    cuts = [summary["cut"] for summary in summaries]
+    spacings = [
+        (summary["ntwx"], summary["frame_ps"])
+        for summary in summaries
+        if summary["ntwx"] or summary["frame_ps"]
+    ]
     spans = []
-    for mdout in mdouts:
-        if mdout is None:
+    for summary in summaries:
+        if summary["duration_ps"] is None:
             spans = None
-            continue
-        try:
-            cuts.append(read_cut(mdout))
-        except ValueError:
-            cuts.append(None)
-        ntwx, frame_ps = _frame_from_mdout(mdout)
-        if ntwx or frame_ps:
-            spacings.append((ntwx, frame_ps))
-        if spans is not None:
-            span = time_span_ps(mdout)
-            if span is None:
-                spans = None
-            else:
-                spans.append(span)
+            break
+        spans.append(summary["duration_ps"])
     present = [value for value in cuts if value is not None]
     if len(set(present)) > 1:
         raise ValueError(
@@ -852,8 +828,7 @@ def _continuation_row(kind, replica, trajectories, topology, workflow, temperatu
     duration = "" if not spans else f"{sum(spans):g}"
     fraction = discard_fraction_for(kind)
     discard_ps = "" if duration == "" else f"{float(duration) * fraction:g}"
-    first = next((path for path in mdouts if path is not None), None)
-    restart = "" if first is None else read_inpcrd(first)
+    restart = summaries[0]["inpcrd"] if summaries else ""
     sidecar = _hold_sidecar(ordered[0], temperature)
     if not restart:
         restart = str(sidecar.get("source_restart", ""))

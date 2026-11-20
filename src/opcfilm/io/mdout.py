@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -153,6 +154,205 @@ def nstep_span_matches(nstep_first, nstep_last, n_frames, ntwx, tolerance_frames
     return abs(int(nstep_last) - int(nstep_first) - expected) <= int(tolerance_frames) * int(ntwx)
 
 
+_BANNER_BYTES = (b"A V E R A G E S", b"FINAL RESULTS", b"F L U C T")
+_HEAD_BYTES = 262144
+_TAIL_BYTES = 65536
+_CHUNK_BYTES = 8 * 1024 * 1024
+_TIME_RE = re.compile(r"TIME\(PS\)\s*=\s*(" + _FLOAT + r")", re.IGNORECASE)
+_CUT_RE = re.compile(r"^\s*cut\s*=\s*([0-9]*\.?[0-9]+)")
+_NTWX_RE = re.compile(r"^\s*ntwx\s*=\s*([0-9]+)")
+_DT_RE = re.compile(r"^\s*dt\s*=\s*([0-9]*\.?[0-9]+)")
+_INPCRD_RE = re.compile(r"INPCRD:\s*(\S+)")
+
+
+def _banner_offset(data):
+    """Byte offset of the first averages, RMS, or final-results banner.
+
+    Parameters
+    ----------
+    data : bytes
+        A slice of an mdout file.
+
+    Returns
+    -------
+    int or None
+        Offset of the earliest banner in ``data``, or None when the slice
+        has no banner.
+    """
+    found = None
+    for needle in _BANNER_BYTES:
+        index = data.find(needle)
+        if index != -1 and (found is None or index < found):
+            found = index
+    return found
+
+
+def _summary_from_text(text):
+    """Header fields and the time span in one mdout text slice.
+
+    Parameters
+    ----------
+    text : str
+        Mdout text that ends at the first banner. Lines after a banner in
+        the slice are ignored.
+
+    Returns
+    -------
+    dict
+        ``cut`` is a float or None. ``ntwx``, ``frame_ps``, and ``inpcrd``
+        are strings. ``duration_ps`` is a float or None. ``first_time``,
+        ``last_time``, and ``time_count`` describe the printed steps.
+    """
+    cut = None
+    ntwx = None
+    dt = None
+    inpcrd = None
+    first = None
+    last = None
+    count = 0
+    for line in text.splitlines():
+        if _SUMMARY.search(line) or _FINAL.search(line):
+            break
+        if "cut" in line:
+            found = _CUT_RE.search(line)
+            if found:
+                cut = float(found.group(1))
+        if "ntwx" in line:
+            found = _NTWX_RE.search(line)
+            if found:
+                ntwx = found.group(1)
+        if "dt" in line:
+            found = _DT_RE.search(line)
+            if found:
+                dt = found.group(1)
+        if "INPCRD" in line:
+            found = _INPCRD_RE.search(line)
+            if found:
+                inpcrd = found.group(1)
+        if "TIME(PS)" in line:
+            found = _TIME_RE.search(line)
+            if found:
+                value = fortran_float(found.group(1))
+                if count == 0:
+                    first = value
+                last = value
+                count += 1
+    duration = None
+    if count >= 2 and first is not None and last is not None:
+        duration = float(last - first)
+    frame_ps = ""
+    if ntwx is not None and dt is not None:
+        frame_ps = f"{float(ntwx) * float(dt):g}"
+    return {
+        "cut": cut,
+        "ntwx": "" if ntwx is None else ntwx,
+        "frame_ps": frame_ps,
+        "inpcrd": "" if inpcrd is None else inpcrd,
+        "duration_ps": duration,
+        "first_time": first,
+        "last_time": last,
+        "time_count": count,
+    }
+
+
+def _public_summary(summary, duration):
+    """Fields the catalog stores, without the scan bookkeeping.
+
+    Parameters
+    ----------
+    summary : dict
+        Header summary from the start of the file.
+    duration : float or None
+        Printed time span in picoseconds.
+
+    Returns
+    -------
+    dict
+        ``cut``, ``ntwx``, ``frame_ps``, ``inpcrd``, and ``duration_ps``.
+    """
+    return {
+        "cut": summary["cut"],
+        "ntwx": summary["ntwx"],
+        "frame_ps": summary["frame_ps"],
+        "inpcrd": summary["inpcrd"],
+        "duration_ps": duration,
+    }
+
+
+def summarize_mdout(path):
+    """Read the mdout fields the catalog needs without parsing every step.
+
+    The cutoff, ``ntwx``, ``dt``, and restart are in the header. The duration
+    is the last ``TIME(PS)`` before the first averages, RMS, or final-results
+    banner, minus the first ``TIME(PS)``. A long run is scanned for that
+    banner instead of turning every energy line into a record.
+
+    Parameters
+    ----------
+    path : path-like
+        Amber mdout.
+
+    Returns
+    -------
+    dict
+        ``cut`` is a float or None. ``ntwx``, ``frame_ps``, and ``inpcrd``
+        are strings. ``duration_ps`` is a float or None when fewer than two
+        steps were printed.
+    """
+    path = Path(path)
+    with path.open("rb") as handle:
+        head = handle.read(_HEAD_BYTES)
+        banner = _banner_offset(head)
+        if banner is not None:
+            text = head[:banner].decode("utf-8", errors="replace")
+            summary = _summary_from_text(text)
+            return _public_summary(summary, summary["duration_ps"])
+        newline = head.rfind(b"\n")
+        if newline != -1:
+            head_text = head[: newline + 1]
+            resume = newline + 1
+        else:
+            head_text = head
+            resume = len(head)
+        summary = _summary_from_text(head_text.decode("utf-8", errors="replace"))
+        handle.seek(resume)
+        overlap = head[max(0, resume - 32) : resume]
+        position = resume
+        found = None
+        while True:
+            chunk = handle.read(_CHUNK_BYTES)
+            if not chunk:
+                break
+            data = overlap + chunk
+            relative = _banner_offset(data)
+            if relative is not None:
+                found = position - len(overlap) + relative
+                break
+            overlap = data[-32:]
+            position += len(chunk)
+        if found is None:
+            handle.seek(0, 2)
+            size = handle.tell()
+            start = max(resume, size - _TAIL_BYTES)
+            handle.seek(start)
+            window = handle.read().decode("utf-8", errors="replace")
+        else:
+            start = max(resume, found - _TAIL_BYTES)
+            handle.seek(start)
+            window = handle.read(found - start).decode("utf-8", errors="replace")
+        tail = _summary_from_text(window)
+        if tail["time_count"]:
+            last = tail["last_time"]
+            total = summary["time_count"] + tail["time_count"]
+        else:
+            last = summary["last_time"]
+            total = summary["time_count"]
+        duration = None
+        if total >= 2 and summary["first_time"] is not None and last is not None:
+            duration = float(last - summary["first_time"])
+        return _public_summary(summary, duration)
+
+
 def time_span_ps(path):
     """Length of a finished run from its printed ``TIME(PS)`` values.
 
@@ -167,10 +367,7 @@ def time_span_ps(path):
         Last printed time minus the first, in picoseconds. None when the
         file has fewer than two time steps.
     """
-    times = [row["time_ps"] for row in parse_file(path) if "time_ps" in row]
-    if len(times) < 2:
-        return None
-    return float(times[-1] - times[0])
+    return summarize_mdout(path)["duration_ps"]
 
 
 def parse_dataframe(path):
