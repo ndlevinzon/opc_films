@@ -225,7 +225,7 @@ def run(args):
     result
         Analyze one trajectory over the requested interface bands.
     """
-    u=mda.Universe(args.top,args.traj);oi,hi=water_indices(u)
+    u=mda.Universe(args.top,args.traj,format="NCDF");oi,hi=water_indices(u)
     rng=np.random.default_rng(args.seed);nframe=len(u.trajectory)
     frameids=np.unique(np.linspace(0,nframe-1,min(args.frames,nframe),dtype=int))
     rows=[];cls=[];orient=[];qcs=[]

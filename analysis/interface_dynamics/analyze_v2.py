@@ -120,7 +120,7 @@ def sample_refs(z_relative, depth, nref, rng):
     return np.concatenate(refs), np.concatenate(names)
 
 def analyze(args):
-    u=mda.Universe(args.top,args.traj);oi,hi=waters(u)
+    u=mda.Universe(args.top,args.traj,format="NCDF");oi,hi=waters(u)
     nframe=len(u.trajectory)
     dt=frame_spacing_ps([float(ts.time) for ts in u.trajectory])
     duration_ps=(nframe-1)*dt
