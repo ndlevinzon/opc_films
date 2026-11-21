@@ -171,7 +171,7 @@ def main(argv=None):
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
-    universe = mda.Universe(str(args.topology), str(args.trajectory))
+    universe = mda.Universe(str(args.topology), str(args.trajectory), format="NCDF")
     indices = water_indices(universe, args.resname, args.oxygen_name)
     print(f"Waters analyzed: {len(indices[0])}")
     profile = accumulate_orientation(universe, indices, args.z_min, args.z_max, args.dz)

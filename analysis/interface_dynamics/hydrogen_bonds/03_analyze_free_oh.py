@@ -253,7 +253,7 @@ def analyze_trajectory(args):
     pathlib.Path
         Directory that received the CSV and JSON outputs.
     """
-    universe = mda.Universe(str(args.top), [str(path) for path in args.traj])
+    universe = mda.Universe(str(args.top), [str(path) for path in args.traj], format="NCDF")
     oxygen_index, hydrogen_index = water_indices(universe)
     if len(oxygen_index) < 2:
         raise ValueError("Topology contains fewer than two waters.")

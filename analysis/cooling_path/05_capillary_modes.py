@@ -218,7 +218,7 @@ def main(argv=None):
 
     destination = Path(args.out)
     destination.mkdir(parents=True, exist_ok=True)
-    universe = mda.Universe(args.top, args.traj)
+    universe = mda.Universe(args.top, args.traj, format="NCDF")
     oxygen_index, _hydrogen = water_indices(universe)
     oxygen_atoms = universe.atoms[oxygen_index]
     first = universe.trajectory[0]

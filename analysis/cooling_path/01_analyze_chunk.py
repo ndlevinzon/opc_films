@@ -203,7 +203,7 @@ def main():
     p.add_argument('--start-frame', type=int, default=0,
                    help='First concatenated frame kept. A hold passes its manifest discard.')
     a=p.parse_args();out=Path(a.out);out.mkdir(parents=True,exist_ok=True)
-    u=mda.Universe(a.top,a.traj)
+    u=mda.Universe(a.top,a.traj,format="NCDF")
     oxygen_index, _hydrogen = water_indices(u)
     ox=u.atoms[oxygen_index]
     stored_dt = frame_spacing_ps([float(ts.time) for ts in u.trajectory])

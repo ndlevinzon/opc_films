@@ -789,7 +789,7 @@ def main(argv=None):
     # ============================================================
     # LOAD TRAJECTORY
     # ============================================================
-    u = mda.Universe(topology, trajectory)
+    u = mda.Universe(topology, trajectory, format="NCDF")
     O_atoms = u.select_atoms(f"resname {water_resname} and name {oxygen_name}")
     O_indices = O_atoms.indices
     print(f"O atoms analyzed: {len(O_indices)}")

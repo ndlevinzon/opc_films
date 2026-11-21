@@ -76,7 +76,7 @@ def bulk_features(topology, trajectories, n_frames):
 
     if isinstance(trajectories, (str, Path)):
         trajectories = [trajectories]
-    universe = mda.Universe(str(topology), [str(path) for path in trajectories])
+    universe = mda.Universe(str(topology), [str(path) for path in trajectories], format="NCDF")
     oxygen_index, _hydrogens = water_indices(universe)
     chosen = sampled_frames(len(universe.trajectory), n_frames, "endpoint")
     blocks = []
@@ -437,7 +437,7 @@ def main(argv=None):
             continue
         if row["replica"] not in models:
             raise SystemExit(f"{row['replica']} has no leave-one-replica model.")
-        universe = mda.Universe(row["topology"], [str(path) for path in trajectory_list(row)])
+        universe = mda.Universe(row["topology"], [str(path) for path in trajectory_list(row)], format="NCDF")
         oxygen_index, _hydrogens = water_indices(universe)
         for frame in sampled_frames(len(universe.trajectory), args.frames, row["kind"]):
             universe.trajectory[int(frame)]

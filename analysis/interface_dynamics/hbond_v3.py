@@ -54,7 +54,7 @@ def main():
     p.add_argument('--window-temperature-drop-K',type=float,default=10)
     p.add_argument('--max-lag-temperature-drop-K',type=float,default=CONFIG.dynamics.cooling_lag_cap_K,help='Cooling-window lag cap. Ignored with --hold.')
     p.add_argument('--v2-events',default=None,help='Use exact V2 origin and reference water identities for event-model join');p.add_argument('--distance',type=float,default=HBOND_OO_CUTOFF_A);p.add_argument('--angle',type=float,default=HBOND_ANGLE_DEG);p.add_argument('--seed',type=int,default=SEEDS['hydrogen_bond_persistence'])
-    args=p.parse_args();u=mda.Universe(args.top,args.traj if len(args.traj)>1 else args.traj[0]);oi,hi=waters(u)
+    args=p.parse_args();u=mda.Universe(args.top,args.traj if len(args.traj)>1 else args.traj[0],format="NCDF");oi,hi=waters(u)
     dt=frame_spacing_ps([float(ts.time) for ts in u.trajectory])
     nframe=len(u.trajectory)
     duration_ps=(nframe-1)*dt
