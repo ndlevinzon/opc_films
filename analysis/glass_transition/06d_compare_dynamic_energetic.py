@@ -128,6 +128,15 @@ def fit_rate_dependence(rate, temperature):
 
     x = np.log10(rate)
 
+    # A line through one cooling rate is undetermined. np.polyfit still
+    # returns numbers for it, so the slope is reported as missing instead.
+    if np.unique(x[np.isfinite(x)]).size < 2:
+        return {
+            "intercept_K": float("nan"),
+            "slope_K_per_decade": float("nan"),
+            "R2": float("nan"),
+        }
+
     b, a = np.polyfit(
         x,
         temperature,

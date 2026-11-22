@@ -76,7 +76,7 @@ def main():
 
         d = pd.read_csv(f)
 
-        d["source_file"] = os.path.basename(f)
+        d["source_file"] = os.path.relpath(f)
 
         frames.append(d)
 
@@ -119,10 +119,15 @@ def main():
         errors="coerce"
     )
 
-    df["replica"] = pd.to_numeric(
-        df["replica"],
-        errors="coerce"
-    )
+    # Replicas are labels such as "r1" from the manifest. Converting them to
+    # numbers turned every label into NaN and merged all replicas.
+    df["replica"] = df["replica"].astype(str).str.strip()
+    unlabeled = df["replica"].isin(["", "nan", "NA", "None"])
+    if unlabeled.any():
+        raise RuntimeError(
+            "Summaries without a replica label: "
+            + ", ".join(sorted(df.loc[unlabeled, "source_file"].astype(str).unique()))
+        )
 
     df["tau_1e_ns"] = pd.to_numeric(
         df["tau_1e_ns"],
@@ -202,6 +207,8 @@ def main():
         ]
 
         c = c[keep].copy()
+        if "replica" in c.columns:
+            c["replica"] = c["replica"].astype(str).str.strip()
 
         df = df.merge(
             c,

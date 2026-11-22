@@ -154,11 +154,13 @@ def spacing_by_temperature(frame):
     spacings = {}
     for temperature, block in frame.groupby("T_K"):
         values = pd.to_numeric(block["frame_ps_selected"], errors="coerce").dropna().unique()
-        if len(values) != 1:
+        # Spacings are medians of single-precision NetCDF times, so replicas
+        # at one temperature can differ by a few hundredths of a picosecond.
+        if len(values) == 0 or np.ptp(values) > max(0.05, 0.005 * float(np.median(values))):
             raise RuntimeError(
                 f"frame_ps_selected is not one value at {float(temperature):g} K: {values}."
             )
-        spacings[float(temperature)] = float(values[0])
+        spacings[float(temperature)] = float(np.median(values))
     return spacings
 
 

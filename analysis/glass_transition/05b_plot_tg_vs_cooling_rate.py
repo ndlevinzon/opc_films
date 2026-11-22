@@ -112,24 +112,32 @@ def main(argv=None):
     parser.add_argument("-o", "--out-prefix", type=Path, default=Path("tg_dyn_vs_rate"))
     args = parser.parse_args(argv)
     points = load_points(args.tables)
-    if len(points) < 2:
-        raise SystemExit("Need at least two cooling rates.")
-    intercept, slope, r2 = fit_log_rate(points["cooling_rate_K_per_ns"], points["Tg_dyn_K"])
+    if points.empty:
+        raise SystemExit("No cooling rate has a dynamic glass temperature.")
     x = np.log10(points["cooling_rate_K_per_ns"].to_numpy(float))
     points = points.copy()
     points["log10_rate"] = x
-    points["Tg_fit_K"] = intercept + slope * x
+    # Holds at one source rate give one T_g^dyn. The table is still written
+    # for compare_arrest; the rate fit needs two rates and is left out.
+    single = points["cooling_rate_K_per_ns"].nunique() < 2
+    if single:
+        intercept = slope = r2 = np.nan
+        points["Tg_fit_K"] = np.nan
+    else:
+        intercept, slope, r2 = fit_log_rate(points["cooling_rate_K_per_ns"], points["Tg_dyn_K"])
+        points["Tg_fit_K"] = intercept + slope * x
     args.out_prefix.parent.mkdir(parents=True, exist_ok=True)
     points.to_csv(args.out_prefix.with_suffix(".csv"), index=False)
     figure, axis = plt.subplots(figsize=(7.2, 5.4))
     axis.scatter(x, points["Tg_dyn_K"], s=65, label=r"$T_g^{dyn}$")
-    grid = np.linspace(x.min(), x.max(), 200)
-    axis.plot(
-        grid,
-        intercept + slope * grid,
-        linewidth=2,
-        label=rf"$T_g^{{dyn}} = {intercept:.2f} + {slope:.2f}\log_{{10}} R$",
-    )
+    if not single:
+        grid = np.linspace(x.min(), x.max(), 200)
+        axis.plot(
+            grid,
+            intercept + slope * grid,
+            linewidth=2,
+            label=rf"$T_g^{{dyn}} = {intercept:.2f} + {slope:.2f}\log_{{10}} R$",
+        )
     axis.set_xlabel(r"$\log_{10} R$ (R in K/ns)")
     axis.set_ylabel(r"$T_g^{dyn}$ (K)")
     axis.set_title("Cooling-rate dependence of the dynamic glass transition")
@@ -139,6 +147,9 @@ def main(argv=None):
     figure.savefig(args.out_prefix.with_suffix(".png"), dpi=300, bbox_inches="tight")
     figure.savefig(args.out_prefix.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(figure)
+    if single:
+        print("One cooling rate: T_g^dyn table written, no rate fit.")
+        return 0
     print(f"Intercept = {intercept:.4f} K")
     print(f"Slope     = {slope:.4f} K/decade")
     print(f"R^2       = {r2:.6f}")
