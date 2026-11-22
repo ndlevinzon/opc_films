@@ -54,7 +54,7 @@ for T in sorted(temps,reverse=True):
                 low=np.clip(z['mean'].to_numpy(float)-z['std'].to_numpy(float),0,1)
                 high=np.clip(z['mean'].to_numpy(float)+z['std'].to_numpy(float),0,1)
                 ax.fill_between(z.lag_ps.to_numpy(),low,high,color=cmap(norm(T)),alpha=.10)
-ax.set(xscale='log',xlabel='Lag (ps)',ylabel='Intermittent original-partner retention, 3–12 Å',title=f'H-bond persistence, {a.rate:g} K/ns')
+ax.set(xscale='log',xlabel='Lag (ps)',ylabel='Intermittent original-partner retention, 3–12 Å',title=f'H-bond persistence, {a.rate} K/ns')
 ax.grid(alpha=.18)
 handles=[Line2D([0],[0],color=cmap(norm(T)),lw=2,label=f'{T:g} K') for T in sorted(temps,reverse=True)]
 handles += [Line2D([0],[0],color='black',ls=ls,lw=2,label=label) for label, ls in REGION_STYLE.values()]

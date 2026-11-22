@@ -71,3 +71,44 @@ def test_already_inverted_axis_is_kept():
     apply_figure_conventions(figure)
     assert axis.get_xlim() == (300, 78)
     plt.close(figure)
+
+
+@pytest.mark.parametrize("label, region", [
+    ("Bulk", "bulk"),
+    ("interior Fs", "bulk"),
+    ("275 K AWI", "awi"),
+    ("AWI outer", "awi_outer"),
+    ("0–6 Å AWI", "awi_outer"),
+    ("3–12 Å AWI", "awi"),
+    ("Bulk − AWI", None),
+    ("Replica mean ± 1 SD", None),
+])
+def test_region_of_label(label, region):
+    from opcfilm.plotting.conventions import region_of
+
+    assert region_of(label) == region
+
+
+def test_two_series_are_black_with_region_styles():
+    figure, axis = plt.subplots()
+    bulk, = axis.plot([1, 2], [1, 2], "o-", color="C0", label="interior")
+    awi, = axis.plot([1, 2], [2, 3], "o-", color="C1", label="awi")
+    axis.fill_between([1, 2], [0, 1], [2, 3], color="C0", alpha=0.2)
+    axis.legend()
+    apply_figure_conventions(figure)
+    assert matplotlib.colors.same_color(bulk.get_color(), "black")
+    assert matplotlib.colors.same_color(awi.get_color(), "black")
+    assert bulk.get_linestyle() == "-"
+    assert awi.get_linestyle() == "--"
+    assert [t.get_text() for t in axis.get_legend().get_texts()] == ["Bulk", "AWI"]
+    plt.close(figure)
+
+
+def test_three_series_keep_color():
+    figure, axis = plt.subplots()
+    lines = [axis.plot([1, 2], [k, k + 1], color=f"C{k}", label=name)[0]
+             for k, name in enumerate(["Bulk", "AWI", "AWI outer"])]
+    apply_figure_conventions(figure)
+    assert matplotlib.colors.same_color(lines[1].get_color(), "C1")
+    assert [line.get_linestyle() for line in lines] == ["-", "--", ":"]
+    plt.close(figure)

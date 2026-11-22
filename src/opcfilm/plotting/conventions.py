@@ -22,6 +22,18 @@ merged into one figure legend to the right of all panels, with repeated
 labels shown once. Figure legends move to the right of the figure.
 Figures are saved with ``bbox_inches="tight"`` unless the caller says
 otherwise, so legends outside the panels are not cut off.
+
+Region styles follow the series label. Bulk (also labelled interior or
+core) is solid, AWI is dashed, and the outer AWI band (0–6 Å) is dotted.
+Series drawn with markers only show bulk as filled and AWI as open
+markers. A label that names both, such as ``Bulk − AWI``, is a contrast and
+keeps its style. Legend text says ``Bulk`` and ``AWI`` rather than
+``interior`` and ``awi``.
+
+A panel that compares at most two labelled series is drawn in black, with
+grey uncertainty bands. If the two series would then look the same, the
+second is dashed, or drawn with open markers. Panels with an overlay axis
+(``twinx`` or ``twiny``) keep their colors, which identify the axes.
 """
 
 from __future__ import annotations
@@ -34,6 +46,12 @@ _NOT_TEMPERATURE = re.compile(
     re.IGNORECASE,
 )
 _OUTSIDE_GAP = 0.02
+
+_BULK = re.compile(r"\b(bulk|interior|core)\b", re.IGNORECASE)
+_AWI = re.compile(r"\bawi\b|interface", re.IGNORECASE)
+_OUTER = re.compile(r"outer|\b0\s*[–-]\s*6\b", re.IGNORECASE)
+_REGION_LINESTYLE = {"bulk": "-", "awi": "--", "awi_outer": ":"}
+_LABEL_WORDS = ((re.compile(r"\binterior\b", re.IGNORECASE), "Bulk"), (re.compile(r"\bawi\b"), "AWI"))
 
 
 def is_temperature_label(label):
@@ -53,6 +71,249 @@ def is_temperature_label(label):
     if not label:
         return False
     return bool(_TEMPERATURE.search(label)) and not _NOT_TEMPERATURE.search(label)
+
+
+def region_of(label):
+    """Region a series label refers to.
+
+    Parameters
+    ----------
+    label : str
+        Series label.
+
+    Returns
+    -------
+    str or None
+        ``"bulk"``, ``"awi"`` or ``"awi_outer"``; None for unlabelled
+        series, other labels, and contrasts that name both regions.
+    """
+    if not label or label.startswith("_"):
+        return None
+    bulk, awi = _BULK.search(label), _AWI.search(label)
+    if bulk and awi:
+        return None
+    if awi:
+        return "awi_outer" if _OUTER.search(label) else "awi"
+    if bulk:
+        return "bulk"
+    return None
+
+
+def normalize_label(label):
+    """Use Bulk and AWI in place of interior and awi.
+
+    Parameters
+    ----------
+    label : str
+        Series or legend label.
+
+    Returns
+    -------
+    str
+        The label with the region words replaced.
+    """
+    for pattern, word in _LABEL_WORDS:
+        label = pattern.sub(word, label)
+    return label
+
+
+def _series(axis):
+    """Labelled data series of one axes.
+
+    Parameters
+    ----------
+    axis : matplotlib.axes.Axes
+        Axes to inspect.
+
+    Returns
+    -------
+    list of tuple
+        ``(kind, artist, label)`` with kind ``"errorbar"``, ``"line"`` or
+        ``"scatter"``. Lines that belong to an errorbar are reported once,
+        through the errorbar.
+    """
+    from matplotlib.collections import PathCollection
+    from matplotlib.container import ErrorbarContainer
+
+    found, owned = [], set()
+    for container in axis.containers:
+        if isinstance(container, ErrorbarContainer):
+            for child in container.get_children():
+                owned.add(id(child))
+            label = container.get_label() or ""
+            if label and not label.startswith("_"):
+                found.append(("errorbar", container, label))
+    for line in axis.get_lines():
+        label = line.get_label() or ""
+        if id(line) in owned or not label or label.startswith("_"):
+            continue
+        found.append(("line", line, label))
+    for collection in axis.collections:
+        label = collection.get_label() or ""
+        if isinstance(collection, PathCollection) and label and not label.startswith("_"):
+            found.append(("scatter", collection, label))
+    return found
+
+
+def _marker_only(line):
+    """Whether a line is drawn with markers and no connecting line."""
+    return line.get_linestyle() in ("None", "none", "", " ") and line.get_marker() not in ("None", "none", "", " ", None)
+
+
+def _style_region(kind, artist, region):
+    """Apply the line style or marker fill of a region."""
+    if kind == "errorbar":
+        artist = artist.lines[0]
+        kind = "line"
+        if artist is None:
+            return
+    if kind == "line":
+        if _marker_only(artist):
+            if region.startswith("awi"):
+                artist.set_markerfacecolor("none")
+        else:
+            artist.set_linestyle(_REGION_LINESTYLE[region])
+    elif kind == "scatter" and region.startswith("awi"):
+        colors = artist.get_facecolors()
+        # Already hollow markers keep their edge color.
+        if len(colors) and any(color[3] > 0 for color in colors):
+            artist.set_edgecolors(colors)
+            artist.set_facecolors("none")
+
+
+def _signature(kind, artist):
+    """What tells one black series from another."""
+    if kind == "errorbar":
+        artist = artist.lines[0]
+        kind = "line"
+        if artist is None:
+            return ("errorbar",)
+    if kind == "line":
+        return (artist.get_linestyle(), artist.get_marker(), str(artist.get_markerfacecolor()))
+    faces = artist.get_facecolors()
+    return ("scatter", str(artist.get_paths()[0].vertices.round(3).tolist()) if artist.get_paths() else "", len(faces) == 0)
+
+
+def _blacken(kind, artist):
+    """Draw a series in black."""
+    if kind == "errorbar":
+        for child in artist.get_children():
+            if hasattr(child, "set_color"):
+                child.set_color("black")
+            # Caps are markers, colored by their edge.
+            if hasattr(child, "set_markeredgecolor"):
+                child.set_markeredgecolor("black")
+        line = artist.lines[0]
+        if line is not None and str(line.get_markerfacecolor()) != "none":
+            line.set_markerfacecolor("black")
+        return
+    if kind == "line":
+        artist.set_color("black")
+        if str(artist.get_markerfacecolor()) != "none":
+            artist.set_markerfacecolor("black")
+        artist.set_markeredgecolor("black")
+        return
+    hollow = len(artist.get_facecolors()) == 0 or all(c[3] == 0 for c in artist.get_facecolors())
+    artist.set_edgecolors("black")
+    artist.set_facecolors("none" if hollow else "black")
+
+
+def _differentiate(kind, artist):
+    """Make the second of two identical black series distinguishable."""
+    if kind == "errorbar":
+        artist = artist.lines[0]
+        kind = "line"
+        if artist is None:
+            return
+    if kind == "line":
+        if _marker_only(artist):
+            artist.set_markerfacecolor("none")
+        else:
+            artist.set_linestyle("--")
+    else:
+        artist.set_facecolors("none")
+
+
+def _style_series(panels):
+    """Region styles, black two-series panels, and Bulk/AWI labels."""
+    for panel in panels:
+        series = []
+        for axis in panel:
+            for kind, artist, label in _series(axis):
+                artist.set_label(normalize_label(label))
+                region = region_of(label)
+                if region is not None:
+                    _style_region(kind, artist, region)
+                series.append((kind, artist))
+        if len(panel) > 1 or not 0 < len(series) <= 2:
+            continue
+        for kind, artist in series:
+            _blacken(kind, artist)
+        # Error bars drawn without a label belong to the black series.
+        from matplotlib.container import ErrorbarContainer
+        for container in panel[0].containers:
+            if isinstance(container, ErrorbarContainer):
+                _blacken("errorbar", container)
+        if len(series) == 2 and _signature(*series[0]) == _signature(*series[1]):
+            _differentiate(*series[1])
+        for collection in panel[0].collections:
+            # Uncertainty bands from fill_between.
+            if type(collection).__name__ in ("PolyCollection", "FillBetweenPolyCollection"):
+                collection.set_facecolor("0.6")
+                collection.set_edgecolor("none")
+
+
+def _sync_legend(legend, panel):
+    """Match legend entries to the restyled series they stand for."""
+    by_label = {}
+    for axis in panel:
+        for kind, artist, label in _series(axis):
+            by_label[label] = (kind, artist)
+    from matplotlib.offsetbox import DrawingArea
+
+    def drawing_areas(box):
+        for child in box.get_children():
+            if isinstance(child, DrawingArea):
+                yield child
+            elif hasattr(child, "get_children"):
+                yield from drawing_areas(child)
+
+    areas = list(drawing_areas(legend))
+    handles = getattr(legend, "legend_handles", None) or legend.legendHandles
+    for index, (handle, text) in enumerate(zip(handles, legend.get_texts())):
+        label = normalize_label(text.get_text())
+        text.set_text(label)
+        if label not in by_label or handle is None:
+            continue
+        kind, artist = by_label[label]
+        source = artist.lines[0] if kind == "errorbar" else artist
+        if source is None:
+            continue
+        try:
+            if kind == "errorbar":
+                # An errorbar entry draws its bar and marker as separate artists.
+                parts = list(areas[index].get_children()) if index < len(areas) else [handle]
+                for part in parts:
+                    if hasattr(part, "set_color"):
+                        part.set_color(source.get_color())
+                    if hasattr(part, "set_markerfacecolor"):
+                        part.set_markerfacecolor(source.get_markerfacecolor())
+                        part.set_markeredgecolor(source.get_markeredgecolor())
+            elif kind == "line" and hasattr(handle, "set_linestyle"):
+                # Copy style only: update_from would also copy the data transform.
+                if hasattr(handle, "set_marker"):
+                    handle.set_color(source.get_color())
+                    handle.set_linestyle(source.get_linestyle())
+                    handle.set_marker(source.get_marker())
+                    handle.set_markerfacecolor(source.get_markerfacecolor())
+                    handle.set_markeredgecolor(source.get_markeredgecolor())
+                else:
+                    handle.set_color(source.get_color())
+            elif kind == "scatter":
+                handle.set_facecolors(source.get_facecolors())
+                handle.set_edgecolors(source.get_edgecolors())
+        except (AttributeError, TypeError, ValueError):
+            pass
 
 
 def _panels(figure):
@@ -175,6 +436,12 @@ def apply_figure_conventions(figure):
         primary = panel[0]
         if is_temperature_label(primary.get_xlabel()) and not primary.xaxis_inverted():
             primary.invert_xaxis()
+
+    _style_series(panels)
+    for panel in panels:
+        for axis in panel:
+            if axis.get_legend() is not None:
+                _sync_legend(axis.get_legend(), panel)
 
     with_legends = []
     for panel in panels:

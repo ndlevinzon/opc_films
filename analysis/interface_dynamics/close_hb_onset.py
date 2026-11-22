@@ -113,7 +113,7 @@ ax.axhline(0,color='gray',ls=':',lw=1)
 ax.axhline(a.effect_threshold,color='gray',ls='--',lw=.8,alpha=.7)
 ax.invert_xaxis()
 ax.set(xlabel='Cooling-window midpoint temperature (K)',ylabel=r'Bulk − AWI retention, 3–12 Å',
-       title=f'Hydrogen-bond persistence, {a.rate:g} K/ns\n{contrast_caption()}')
+       title=f'Hydrogen-bond persistence, {a.rate} K/ns\n{contrast_caption()}')
 ax.grid(alpha=.15);ax.legend(title='Observed lag',bbox_to_anchor=(1.02,.5),loc='center left',frameon=False)
 fig.tight_layout();fig.savefig(a.out/'FIG_HB_temperature_lag.png',dpi=300,bbox_inches='tight');fig.savefig(a.out/'FIG_HB_temperature_lag.pdf',bbox_inches='tight');plt.close(fig)
 # Optional clean pairing of region-specific resolved relaxation times at same replica and T.
