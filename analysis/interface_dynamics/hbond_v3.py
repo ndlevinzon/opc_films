@@ -45,6 +45,19 @@ def get_frame(u,frame,oi,hi):
     H=np.asarray(ts.positions[hi],float)
     return O,H,L
 
+def skip_short_window(args, reason, **details):
+    """Record a cooling window too short for the lag set and return.
+
+    A hold that is too short is still an error. The record is
+    ``skipped.json`` in the output directory, and no ``hb_metadata.json``
+    is written.
+    """
+    if args.hold:
+        raise ValueError(reason)
+    out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
+    (out/'skipped.json').write_text(json.dumps(dict(reason=reason,traj=args.traj,**details),indent=2,default=str))
+    print(f'SKIPPED {out}: {reason}',flush=True)
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--top',required=True);p.add_argument('--traj',action='append',required=True);p.add_argument('--out',required=True)
     p.add_argument('--origins',type=int,default=CONFIG.hbond.origins);p.add_argument('--nref-region',type=int,default=CONFIG.dynamics.references_per_region)
@@ -63,18 +76,26 @@ def main():
         duration_ps, args.max_lag_temperature_drop_K, args.window_temperature_drop_K)
     lags=sorted(set(round(float(s)/dt) for s in args.lags_ps.split(',')))
     lags=[int(v) for v in lags if 1<=v and v*dt<=max_lag_ps]
-    if not lags:raise ValueError('No lag fits the trajectory. Use --hold for an isothermal trajectory.')
+    if not lags:return skip_short_window(args,'No lag fits the trajectory. Use --hold for an isothermal trajectory.',nframes=nframe,dt_ps=dt,max_lag_ps=max_lag_ps)
     evdelta=max(1,round(args.event_window_ps/dt));maxlag=max(lags+[2*evdelta]);maxstart=len(u.trajectory)-1-maxlag
-    if maxstart<0:raise ValueError('Trajectory too short')
+    if maxstart<0:return skip_short_window(args,'Trajectory too short',nframes=nframe,dt_ps=dt,max_lag_frames=maxlag)
     first=discard_frame_count(nframe, "hold" if args.hold else "ramp", HOLD_DISCARD_FRACTION)
     if first>maxstart:raise ValueError('The equilibration discard leaves no origin.')
     origins=np.unique(np.linspace(first,maxstart,min(args.origins,maxstart-first+1),dtype=int))
-    rng=np.random.default_rng(args.seed);curves=[];dist=[];events=[];qc=[]
+    rng=np.random.default_rng(args.seed);curves=[];dist=[];events=[];qc=[];v2_dropped=0
     if args.v2_events:
         prior=pd.read_csv(args.v2_events)
         if not {"origin","ref","region"}.issubset(prior):raise ValueError("Invalid V2 event data")
         origins=np.sort(prior.origin.astype(int).unique())
-        if int(origins.max())+maxlag>=len(u.trajectory):raise ValueError("V2 origins too late for HB lags; shorten lags")
+        # analyze_v2 places its last origin by its own longest lag, which can be
+        # shorter than the hydrogen-bond lag set. Origins without room for every
+        # hydrogen-bond lag are dropped, so all lags share one origin set.
+        late=origins+maxlag>=len(u.trajectory)
+        v2_dropped=int(late.sum())
+        if v2_dropped:
+            print(f'Dropping {v2_dropped} of {len(origins)} V2 origins without room for the {maxlag*dt:g} ps lag',flush=True)
+            origins=origins[~late]
+        if not len(origins):raise ValueError('No V2 origin leaves room for the hydrogen-bond lags')
     for origin in origins:
         O0,H0,L=get_frame(u,origin,oi,hi)
         depth,_,_,z_relative=gds_depth(O0,L)
@@ -126,5 +147,5 @@ def main():
     pd.DataFrame(dist).to_csv(out/'hb_coord_samples.csv',index=False)
     pd.DataFrame(events).to_csv(out/'hb_event_samples.csv',index=False)
     pd.DataFrame(qc).to_csv(out/'hb_qc.csv',index=False)
-    (out/'hb_metadata.json').write_text(json.dumps(dict(traj=args.traj,dt_ps=dt,segment_joins=njoin,hold=bool(args.hold),max_lag_ps=max_lag_ps,origins=len(origins),distance_A=args.distance,angle_deg=args.angle,seed=args.seed,region_bin_A=REGION_BIN_A,notes='Intermittent original-partner persistence at lagged snapshots. Not continuous survival. Cooling-window lags use the same temperature cap as analyze_v2.py unless --hold is set. Retention is compared at 320 ps; the stored list ends at 640 ps and is not extended on a hold. Snapshot resolution limits exchange detection. Water IDs follow topology residue order. Region at initial origin. Hydrogen bonds use slab.directed_hydrogen_bonds.'),indent=2))
+    (out/'hb_metadata.json').write_text(json.dumps(dict(traj=args.traj,dt_ps=dt,segment_joins=njoin,v2_origins_dropped=v2_dropped,hold=bool(args.hold),max_lag_ps=max_lag_ps,origins=len(origins),distance_A=args.distance,angle_deg=args.angle,seed=args.seed,region_bin_A=REGION_BIN_A,notes='Intermittent original-partner persistence at lagged snapshots. Not continuous survival. Cooling-window lags use the same temperature cap as analyze_v2.py unless --hold is set. Retention is compared at 320 ps; the stored list ends at 640 ps and is not extended on a hold. Snapshot resolution limits exchange detection. Water IDs follow topology residue order. Region at initial origin. Hydrogen bonds use slab.directed_hydrogen_bonds.'),indent=2))
 if __name__=='__main__':main()

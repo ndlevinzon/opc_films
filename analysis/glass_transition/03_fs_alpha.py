@@ -610,7 +610,8 @@ def main():
     ap.add_argument("--oxygen-offset", type=int, default=0)
     ap.add_argument(
         "--water-resnames", nargs="+",
-        default=["WAT", "HOH", "OPC", "TIP3", "TIP4"],
+        default=["WAT", "HOH", "OPC"],
+        help="Must be a subset of WAT, HOH, OPC; the oxygens come from common.slab.water_indices.",
     )
     ap.add_argument("--temperature", type=float, default=np.nan)
     ap.add_argument("--rate", type=float, default=np.nan)

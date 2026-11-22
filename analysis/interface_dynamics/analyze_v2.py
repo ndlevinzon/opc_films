@@ -119,6 +119,19 @@ def sample_refs(z_relative, depth, nref, rng):
         return np.array([], dtype=int), np.array([], dtype=object)
     return np.concatenate(refs), np.concatenate(names)
 
+def skip_short_window(args, reason, **details):
+    """Record a cooling window too short for the lag set and return.
+
+    A hold that is too short is still an error. A cooling window at the
+    fastest rates can be shorter than the lag cap allows; it is recorded in
+    ``skipped.json`` so the workflow can finish without it.
+    """
+    if args.hold:
+        raise RuntimeError(reason)
+    out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
+    (out/'skipped.json').write_text(json.dumps(dict(reason=reason,traj=args.traj,**details),indent=2,default=str))
+    print(f'SKIPPED {out}: {reason}',flush=True)
+
 def analyze(args):
     u=mda.Universe(args.top,args.traj,format="NCDF");oi,hi=waters(u)
     nframe=len(u.trajectory)
@@ -134,10 +147,10 @@ def analyze(args):
         max_lag_ps=duration_ps if args.hold else cooling_window_lag_cap_ps(
             duration_ps, args.max_lag_temperature_drop_K, args.window_temperature_drop_K)
     lags=sorted(set(int(round(value/dt)) for value in lag_ps if value/dt>=1 and value<=max_lag_ps+1e-6))
-    if not lags:raise RuntimeError('No lag fits trajectory; adjust --lags-ps or the temperature-drop cap')
+    if not lags:return skip_short_window(args,'No lag fits trajectory; adjust --lags-ps or the temperature-drop cap',nframes=nframe,dt_ps=dt,max_lag_ps=max_lag_ps)
     event_delta=max(1,int(round(args.event_window_ps/dt)))
     max_lag=max(lags+[2*event_delta]);last_origin=nframe-max_lag-1
-    if last_origin<0:raise RuntimeError('Trajectory too short')
+    if last_origin<0:return skip_short_window(args,'Trajectory too short',nframes=nframe,dt_ps=dt,max_lag_frames=max_lag)
     first_origin=discard_frame_count(nframe, "hold" if args.hold else "ramp", HOLD_DISCARD_FRACTION)
     if first_origin>last_origin:raise RuntimeError('The equilibration discard leaves no origin.')
     origins=np.unique(np.linspace(first_origin,last_origin,min(args.origins,last_origin-first_origin+1),dtype=int))

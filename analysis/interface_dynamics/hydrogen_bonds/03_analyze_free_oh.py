@@ -385,7 +385,7 @@ def analyze_trajectory(args):
             hydrogen_bond="O-O < cutoff and O-H...O angle > threshold; one count per directed water pair.",
             region_assignment="Bulk |z|<=15 A and one depth band. Overlap is an error.",
         )
-        (destination / "free_oh_metadata.json").write_text(json.dumps(metadata, indent=2))
+        (destination / "free_oh_metadata.json").write_text(json.dumps(metadata, indent=2, default=str))
         print(f"Wrote {destination}", flush=True)
     return root
 

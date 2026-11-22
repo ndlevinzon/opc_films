@@ -31,7 +31,7 @@ from common.order import (
     translational_tetrahedral_sk,
 )
 from common.slab import half_density_surfaces, region_masks, water_indices
-from common.trajectory import frame_spacing_ps, require_film
+from common.trajectory import continuation_frame_spacing_ps, require_film
 
 
 def geometry(z, Lx, Ly, Lz, dz, core_halfwidth):
@@ -206,7 +206,8 @@ def main():
     u=mda.Universe(a.top,a.traj,format="NCDF")
     oxygen_index, _hydrogen = water_indices(u)
     ox=u.atoms[oxygen_index]
-    stored_dt = frame_spacing_ps([float(ts.time) for ts in u.trajectory])
+    # Holds are joined from restarted segments; only the in-segment spacing is recorded.
+    stored_dt, _joins = continuation_frame_spacing_ps([float(ts.time) for ts in u.trajectory])
     require_film(len(ox), u.trajectory[0].dimensions[:3])
     rng=np.random.default_rng(a.seed); frames=[]; profiles=[];orders=[]
     sample_idx=np.sort(rng.choice(len(ox),min(len(ox),a.nref),replace=False))

@@ -6,5 +6,4 @@ results/
 logs/
 outputs/
 .snakemake/
-mdanalysis_ncdf_format.patch
-segment_joins.patch
+/patches/
