@@ -17,6 +17,8 @@ from common.uncertainty import contrast_caption, paired_student_interval
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from opcfilm.plotting.conventions import install_figure_conventions
+install_figure_conventions()  # temperature axes hot to cold; legends outside panels
 
 KEYS=['replica','rate_K_ns','temp_mid_K','region','awi_inner_A','awi_outer_A']
 METRICS={

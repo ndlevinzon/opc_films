@@ -19,6 +19,8 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from opcfilm.plotting.conventions import install_figure_conventions
+install_figure_conventions()  # temperature axes hot to cold; legends outside panels
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.paths import ensure_analysis_on_path

@@ -14,6 +14,8 @@ from common.constants import REGION_STYLE
 from common.rates import canonicalize_rate, directory_code, stored_rate_label
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from opcfilm.plotting.conventions import install_figure_conventions
+install_figure_conventions()  # temperature axes hot to cold; legends outside panels
 PAT=re.compile(r'[/\\](r[123])[/\\]ramp_nvt[/\\](\d+)K_ns[/\\](.+)[/\\]hb_coord_samples\.csv$')
 PAT_KIND=re.compile(r'[/\\](ramp|hold|endpoint)[/\\](r[123])[/\\]([^/\\]+)Kns[/\\]([^/\\]+)K[/\\]([^/\\]+)[/\\]hb_coord_samples\.csv$')
 T=re.compile(r'(\d{2,3})_to_(\d{2,3})K')

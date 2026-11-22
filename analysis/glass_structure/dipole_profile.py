@@ -16,6 +16,8 @@ from pathlib import Path
 
 import MDAnalysis as mda
 import matplotlib.pyplot as plt
+from opcfilm.plotting.conventions import install_figure_conventions
+install_figure_conventions()  # temperature axes hot to cold; legends outside panels
 import numpy as np
 import pandas as pd
 

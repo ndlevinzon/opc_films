@@ -63,6 +63,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from opcfilm.plotting.conventions import install_figure_conventions
+install_figure_conventions()  # temperature axes hot to cold; legends outside panels
 from scipy.optimize import brentq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1446,6 +1448,10 @@ def make_plot(
         "\n"
         rf"relative mismatch = {rel_mismatch:.1f}%"
     )
+
+    if not np.isfinite(dyn_fit["slope_K_per_decade"]):
+        # One cooling rate has no rate sensitivity to report.
+        text = "One cooling rate: no rate-sensitivity fit"
 
     ax.text(
         0.035,

@@ -15,6 +15,8 @@ from opcfilm.config import CONFIG
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from opcfilm.plotting.conventions import install_figure_conventions
+install_figure_conventions()  # temperature axes hot to cold; legends outside panels
 
 from scipy.optimize import brentq
 
