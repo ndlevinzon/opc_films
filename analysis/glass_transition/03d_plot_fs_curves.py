@@ -78,11 +78,19 @@ def load_fs_data(pattern, block="whole", temps=None):
 
     rows = []
     for f in files:
-        T, replica = parse_filename(f)
+        df = pd.read_csv(f)
+        try:
+            T, replica = parse_filename(f)
+        except ValueError:
+            # Workflow tables (results/fs_tau/<row>/fs_curve.csv) carry the
+            # temperature and replica as columns instead of in the name.
+            if "T_K" not in df or "replica" not in df or df.empty:
+                raise
+            T = int(round(float(df["T_K"].iloc[0])))
+            replica = str(df["replica"].iloc[0])
         if temps is not None and T not in temps:
             continue
 
-        df = pd.read_csv(f)
         required = ["block", "lag_ps", "Fs_parallel"]
         missing = [c for c in required if c not in df.columns]
         if missing:

@@ -26,6 +26,7 @@ from common.paths import ensure_analysis_on_path
 
 ensure_analysis_on_path(__file__)
 from common.constants import PROFILE_BIN_A
+from opcfilm.config import CONFIG
 
 
 def water_indices(universe, resname, oxygen_name):
@@ -64,31 +65,64 @@ def water_indices(universe, resname, oxygen_name):
     )
 
 
-def accumulate_orientation(universe, indices, z_min, z_max, dz):
+WATER_MASS_G_MOL = CONFIG.film.water_molar_mass_g_mol
+AVOGADRO = 6.02214076e23
+
+
+def slab_center(z, length):
+    """Center of a slab that may cross the periodic boundary in z.
+
+    Parameters
+    ----------
+    z : numpy.ndarray
+        Oxygen z coordinates, in angstroms.
+    length : float
+        Box length along z.
+
+    Returns
+    -------
+    float
+        Circular mean of ``z`` on the periodic interval.
+    """
+    angle = 2.0 * np.pi * z / length
+    center = np.arctan2(np.mean(np.sin(angle)), np.mean(np.cos(angle)))
+    return float(center * length / (2.0 * np.pi))
+
+
+def accumulate_orientation(universe, indices, z_min, z_max, dz, frames=None):
     """Bin the dipole projection along z.
 
     Parameters
     ----------
     universe : MDAnalysis.Universe
-        Trajectory to average. Every frame is used.
+        Trajectory to average.
     indices : tuple of numpy.ndarray
         Oxygen and two hydrogen index arrays.
     z_min, z_max, dz : float
-        Histogram limits and bin width, in angstroms.
+        Histogram limits and bin width, in angstroms. z is measured from
+        the slab center of each frame.
+    frames : iterable of int, optional
+        Frames to use. Default every frame.
 
     Returns
     -------
     pandas.DataFrame
-        Columns ``z``, ``mean_cos_theta``, ``mean_P2``, and ``count``.
+        Columns ``z``, ``mean_cos_theta``, ``mean_P2``, ``count``,
+        ``rho_g_cm3`` (oxygen-derived water mass density) and ``n_frames``.
     """
     oxygen, hydrogen1, hydrogen2 = indices
+    if frames is None:
+        frames = range(len(universe.trajectory))
     edges = np.arange(z_min, z_max + dz, dz)
     centers = 0.5 * (edges[:-1] + edges[1:])
     n_bins = len(centers)
     sum_cos = np.zeros(n_bins)
     sum_p2 = np.zeros(n_bins)
     counts = np.zeros(n_bins)
-    for _frame in universe.trajectory:
+    volume = 0.0
+    n_frames = 0
+    for frame in frames:
+        timestep = universe.trajectory[frame]
         positions = universe.atoms.positions
         dipole = 0.5 * (positions[hydrogen1] + positions[hydrogen2]) - positions[oxygen]
         norm = np.linalg.norm(dipole, axis=1)
@@ -96,7 +130,12 @@ def accumulate_orientation(universe, indices, z_min, z_max, dz):
         cosine = np.zeros(len(norm))
         cosine[valid] = dipole[valid, 2] / norm[valid]
         order = 0.5 * (3.0 * cosine**2 - 1.0)
+        lx, ly, lz = (float(value) for value in timestep.dimensions[:3])
+        # z is measured from the slab center, wrapped into the box.
         z = positions[oxygen, 2]
+        z = (z - slab_center(z, lz) + 0.5 * lz) % lz - 0.5 * lz
+        volume += lx * ly * dz
+        n_frames += 1
         bins = np.digitize(z, edges) - 1
         keep = (bins >= 0) & (bins < n_bins)
         sum_cos += np.bincount(bins[keep], weights=cosine[keep], minlength=n_bins)
@@ -108,6 +147,8 @@ def accumulate_orientation(universe, indices, z_min, z_max, dz):
             "mean_cos_theta": np.divide(sum_cos, counts, out=np.full_like(sum_cos, np.nan), where=counts > 0),
             "mean_P2": np.divide(sum_p2, counts, out=np.full_like(sum_p2, np.nan), where=counts > 0),
             "count": counts,
+            "rho_g_cm3": counts / volume * WATER_MASS_G_MOL / AVOGADRO * 1.0e24 if volume else np.nan,
+            "n_frames": n_frames,
         }
     )
 
@@ -163,7 +204,10 @@ def main(argv=None):
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--topology", type=Path, required=True)
-    parser.add_argument("--trajectory", type=Path, required=True)
+    parser.add_argument("--trajectory", type=Path, required=True, nargs="+",
+                        help="Trajectory, or the segments of one run in order.")
+    parser.add_argument("--stride", type=int, default=1, help="Keep every Nth stored frame.")
+    parser.add_argument("--discard-ps", type=float, default=0.0, help="Leading time to skip, in ps.")
     parser.add_argument("--out", type=Path, default=Path("."))
     parser.add_argument("--z-min", type=float, default=-100.0)
     parser.add_argument("--z-max", type=float, default=100.0)
@@ -173,10 +217,15 @@ def main(argv=None):
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
-    universe = mda.Universe(str(args.topology), str(args.trajectory), format="NCDF")
+    universe = mda.Universe(str(args.topology), [str(path) for path in args.trajectory], format="NCDF")
     indices = water_indices(universe, args.resname, args.oxygen_name)
     print(f"Waters analyzed: {len(indices[0])}")
-    profile = accumulate_orientation(universe, indices, args.z_min, args.z_max, args.dz)
+    times = np.array([float(ts.time) for ts in universe.trajectory])
+    first = int(np.searchsorted(times - times[0], args.discard_ps - 1e-6))
+    frames = range(first, len(times), max(1, args.stride))
+    if not len(frames):
+        raise SystemExit("--discard-ps removes every frame.")
+    profile = accumulate_orientation(universe, indices, args.z_min, args.z_max, args.dz, frames)
     profile.to_csv(args.out / "water_orientation_z_profile.csv", index=False)
     (args.out / "orientation_metadata.json").write_text(json.dumps({
         "profile_bin_A": args.dz,

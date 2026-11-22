@@ -175,6 +175,38 @@ rule classifier:
         "--manifest {MANIFEST} --outdir results/classifier > {log} 2>&1"
 
 
+rule endpoint_structure:
+    # Local order, CHILL+, depth-resolved S(q), and density and dipole
+    # profiles of the 300 K and 78 K endpoints (main text Figs. 4 and 5a-b).
+    output:
+        touch(f"{F}/endpoint_structure/{{row}}.done"),
+    log:
+        "logs/endpoint_structure/{row}.log",
+    resources:
+        cpus_per_task=4,
+        mem_mb=64000,
+        runtime=1440,
+    shell:
+        "bash workflow/reduce/endpoint_structure_row.sh {wildcards.row} > {log} 2>&1"
+
+
+rule lda_frames:
+    # One representative frame per hold (250-150 K) colored by the display
+    # classifier, for main text Fig. 5c. Display only, not quantitative.
+    input:
+        expand(f"{F}/capillary/{{row}}.done", row=HOLD),
+    output:
+        touch(f"{F}/lda_frames.done"),
+    log:
+        "logs/lda_frames.log",
+    resources:
+        cpus_per_task=4,
+        mem_mb=32000,
+        runtime=720,
+    shell:
+        "bash workflow/reduce/lda_frames.sh > {log} 2>&1"
+
+
 rule tg_dyn:
     input:
         expand(f"{F}/fs_tau/{{row}}.done", row=HOLD + END),
@@ -216,6 +248,8 @@ rule figures:
             f"{F}/energy_arrest.done",
             f"{F}/compare_arrest.done",
             f"{F}/classifier.done",
+            expand(f"{F}/endpoint_structure/{{row}}.done", row=END),
+            f"{F}/lda_frames.done",
             expand(f"{F}/capillary/{{row}}.done", row=HOLD),
             expand(f"{F}/hbond/{{row}}.done", row=RAMP + HOLD),
             expand(f"{F}/defects/{{row}}.done", row=RAMP + HOLD),

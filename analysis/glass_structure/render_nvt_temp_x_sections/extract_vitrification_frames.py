@@ -53,21 +53,45 @@ TEMPERATURES = [
 # TRAJECTORY PATH
 # ============================================================
 
+MANIFEST = Path(os.environ.get(
+    "OPC_MANIFEST",
+    Path(__file__).resolve().parents[3] / "config" / "manifest.tsv",
+))
+
+
 def trajectory_path(
     replica,
     temperature,
 ):
+    """Segments of the hold at one temperature, from the project manifest.
 
-    return (
-        BASE
-        / f"r{replica}"
-        / "ramp_nvt"
-        / "4K_ns"
-        / "prop"
-        / f"{temperature}K"
-        / "ANALYSIS"
-        / f"{temperature}K_centered_slab.nc"
-    )
+    Parameters
+    ----------
+    replica : int
+        Replica number.
+    temperature : float
+        Hold temperature in kelvin.
+
+    Returns
+    -------
+    list of str
+        Trajectory segments in order.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the manifest has no such hold.
+    """
+    from opcfilm.catalog import load_manifest, trajectory_list
+
+    for row in load_manifest(MANIFEST):
+        if (
+            row["kind"] == "hold"
+            and row["replica"] == f"r{replica}"
+            and abs(float(row["temperature_K"]) - float(temperature)) < 0.5
+        ):
+            return [str(path) for path in trajectory_list(row)]
+    raise FileNotFoundError(f"No hold at {temperature} K for r{replica} in {MANIFEST}")
 
 
 # ============================================================
@@ -128,9 +152,10 @@ DISCARD_PS = 0.0
 # OUTPUT
 # ============================================================
 
-OUTDIR = Path(
-    "./representative_frames"
-)
+OUTDIR = Path(os.environ.get(
+    "OPC_FRAMES_OUT",
+    "./representative_frames",
+))
 
 OUTDIR.mkdir(
     parents=True,
@@ -170,6 +195,32 @@ def calculate_local_metrics(
         sample_idx = np.arange(len(O_pos))
     features = structure_features(O_pos, BOX, sample_idx)
     return features[:, 0], features[:, 1], features[:, 2]
+
+
+def center_slab(universe):
+    """Shift the current frame so the slab center is at z = 0.
+
+    The center is the circular mean of the oxygen z coordinates, so a slab
+    split by the periodic boundary is joined first. The shift is periodic
+    and changes no distance.
+
+    Parameters
+    ----------
+    universe : MDAnalysis.Universe
+        Universe positioned on the frame.
+
+    Returns
+    -------
+    None
+        Positions of the current frame are changed in place.
+    """
+    lz = float(universe.dimensions[2])
+    oxygen = universe.select_atoms(f"resname {WATER_RESNAME} and name {OXYGEN_NAME}")
+    angle = 2.0 * np.pi * oxygen.positions[:, 2] / lz
+    center = np.arctan2(np.mean(np.sin(angle)), np.mean(np.cos(angle))) * lz / (2.0 * np.pi)
+    positions = universe.atoms.positions
+    positions[:, 2] = (positions[:, 2] - center + 0.5 * lz) % lz - 0.5 * lz
+    universe.atoms.positions = positions
 
 
 def use_frame_box(universe):
@@ -289,6 +340,7 @@ def candidate_frame_metrics(
         frame_index
     ]
     use_frame_box(universe)
+    center_slab(universe)
 
 
     O_pos = (
@@ -429,16 +481,10 @@ def choose_representative_frame(
     )
 
 
-    if not traj.exists():
-
-        raise FileNotFoundError(
-            traj
-        )
-
-
     u = mda.Universe(
         str(TOPOLOGY),
-        str(traj),
+        traj,
+        format="NCDF",
     )
     use_frame_box(u)
 
@@ -606,7 +652,8 @@ def extract_frame(
 
     u = mda.Universe(
         str(TOPOLOGY),
-        str(trajectory),
+        trajectory,
+        format="NCDF",
     )
     use_frame_box(u)
 
@@ -615,6 +662,7 @@ def extract_frame(
         frame_index
     ]
     use_frame_box(u)
+    center_slab(u)
 
 
     # ========================================================
@@ -715,7 +763,7 @@ for temperature in TEMPERATURES:
                 ],
 
             "trajectory":
-                str(
+                ";".join(
                     trajectory
                 ),
 

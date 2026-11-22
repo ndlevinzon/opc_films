@@ -10,7 +10,10 @@ if (( ${#files[@]} == 0 )); then
   exit 1
 fi
 python analysis/glass_transition/04_collect_tau.py -o results/tg/tau_all.csv "${files[@]}"
-mapfile -t rates < <(python -c "import pandas as pd; m=pd.read_csv('config/manifest.tsv', sep='\t', dtype=str, keep_default_na=False); print('\n'.join(sorted(set(m.loc[m.kind=='hold','source_rate_K_per_ns']) - {''})))")
+# One relaxation law, measured on the holds, gives T_g^dyn at every cooling
+# rate: the rate sets the kinetic time scale that tau must reach. So the fit
+# runs once per ramp rate, all on the same tau table (main text, Eq. 3).
+mapfile -t rates < <(python -c "import pandas as pd; m=pd.read_csv('config/manifest.tsv', sep='\t', dtype=str, keep_default_na=False); r=m.loc[m.kind=='ramp','rate_K_per_ns']; print('\n'.join(sorted(set(r) - {''}, key=float)))")
 for rate in "${rates[@]}"; do
   python analysis/glass_transition/05_fit_relaxation_tg.py \
     -i results/tg/tau_all_whole.csv --cooling-rate "$rate" --out-prefix "results/tg/${rate}"

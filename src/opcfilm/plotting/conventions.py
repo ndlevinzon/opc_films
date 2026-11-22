@@ -345,7 +345,12 @@ def _panels(figure):
     return panels
 
 
-def _has_right_neighbour(panel, panels):
+def _colorbars(figure):
+    """Colorbar axes of a figure."""
+    return [axis for axis in figure.axes if axis.get_label() == "<colorbar>" and axis.get_visible()]
+
+
+def _has_right_neighbour(panel, panels, others=()):
     """Whether another panel lies to the right and overlaps vertically.
 
     Parameters
@@ -361,7 +366,7 @@ def _has_right_neighbour(panel, panels):
         True when a legend outside the right edge would cover a panel.
     """
     box = panel[0].get_position()
-    for other in panels:
+    for other in list(panels) + [[axis] for axis in others]:
         if other is panel:
             continue
         candidate = other[0].get_position()
@@ -450,7 +455,9 @@ def apply_figure_conventions(figure):
             with_legends.append((panel, legends))
     # One crowded panel means every panel legend joins the figure legend, so
     # no two legends compete for the space right of the panels.
-    merge = any(_has_right_neighbour(panel, panels) for panel, _ in with_legends)
+    # A colorbar next to a panel also takes the space a legend would use.
+    bars = _colorbars(figure)
+    merge = any(_has_right_neighbour(panel, panels, bars) for panel, _ in with_legends)
     merged = []
     for panel, legends in with_legends:
         if merge:
@@ -476,7 +483,9 @@ def apply_figure_conventions(figure):
             seen.add(label)
             handles.append(handle)
             labels.append(label)
-        right = max(panel[0].get_position().x1 for panel in panels)
+        right = max([panel[0].get_position().x1 for panel in panels]
+                    + [axis.get_tightbbox(figure.canvas.get_renderer()).transformed(figure.transFigure.inverted()).x1
+                       for axis in bars])
         figure.legend(
             handles,
             labels,

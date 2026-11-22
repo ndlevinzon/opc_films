@@ -49,3 +49,10 @@ subprocess.check_call([
 ])
 PY
 python analysis/cooling_path/04_summarize.py --manifest config/manifest.tsv --out results/cooling_summary
+# Apparent C_V and expansivity along each cooling path (main text Fig. 2e-f).
+top=$(python -c "import pandas as pd; m=pd.read_csv('config/manifest.tsv', sep='\t', dtype=str, keep_default_na=False); print(next(value for value in m.topology if value))")
+python analysis/cooling_path/opc_thermo_response/02_thermo_response.py \
+  --density-manifest config/manifest.tsv \
+  --energy-map results/energy/energy_map.tsv \
+  --topology "$top" \
+  --out results/thermo

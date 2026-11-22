@@ -30,7 +30,7 @@ from common.order import local_structure_index as shared_lsi
 from common.order import orientational_tetrahedral_q as shared_q
 from common.order import translational_tetrahedral_sk as shared_sk
 from common.slab import region_masks, slab_geometry
-from common.trajectory import frame_spacing_ps, require_film
+from common.trajectory import continuation_frame_spacing_ps, require_film
 
 def orientational_tetrahedral_q(O_pos, i, nbrs4):
     """Orientational tetrahedral order q.
@@ -682,7 +682,8 @@ def main(argv=None):
         description="Local order, CHILL+, and depth-resolved in-plane S(q)."
     )
     parser.add_argument("--topology", required=True, help="Amber prmtop.")
-    parser.add_argument("--trajectory", required=True, help="Centered slab trajectory.")
+    parser.add_argument("--trajectory", required=True, nargs="+", help="Centered slab trajectory, or the segments of one run in order.")
+    parser.add_argument("--discard-ps", type=float, default=0.0, help="Leading time to skip, in ps from the first frame.")
     parser.add_argument("--out", default=".", help="Directory for CSV and NPZ outputs.")
     parser.add_argument("--water-resname", default="WAT")
     parser.add_argument("--oxygen-name", default="O")
@@ -703,10 +704,11 @@ def main(argv=None):
     parser.add_argument("--no-bragg", action="store_true")
     parser.add_argument("--debug-sq", action="store_true")
     args = parser.parse_args(argv)
+    # Paths are resolved before the change of directory below.
+    topology = os.path.abspath(args.topology)
+    trajectory = [os.path.abspath(path) for path in args.trajectory]
     os.makedirs(args.out, exist_ok=True)
     os.chdir(args.out)
-    topology = args.topology
-    trajectory = args.trajectory
     water_resname = args.water_resname
     oxygen_name = args.oxygen_name
     Lx = Ly = Lz = None
@@ -794,13 +796,17 @@ def main(argv=None):
     O_indices = O_atoms.indices
     print(f"O atoms analyzed: {len(O_indices)}")
     stored_times = [float(ts.time) for ts in u.trajectory]
-    stored_spacing = frame_spacing_ps(stored_times)
+    stored_spacing, _joins = continuation_frame_spacing_ps(stored_times)
+    first_frame = int(np.searchsorted(np.asarray(stored_times) - stored_times[0], args.discard_ps - 1e-6))
+    if first_frame >= len(stored_times):
+        raise RuntimeError("--discard-ps removes every frame.")
+    print(f"Discarding the first {first_frame} frames ({args.discard_ps:g} ps); {_joins} segment joins.")
     print(
         f"Stored frame spacing {stored_spacing:g} ps; "
         f"stride {frame_stride} analyzes every {stored_spacing * frame_stride:g} ps."
     )
     surfaces = []
-    for ts in u.trajectory[::frame_stride]:
+    for ts in u.trajectory[first_frame::frame_stride]:
         box = require_film(len(O_indices), ts.dimensions[:3])
         _, _, bounds, _ = slab_geometry(
             np.asarray(O_atoms.positions, dtype=float),
@@ -884,10 +890,16 @@ def main(argv=None):
     # ============================================================
     # MAIN LOOP
     # ============================================================
-    for ts in u.trajectory[::frame_stride]:
+    for ts in u.trajectory[first_frame::frame_stride]:
         Lx, Ly, Lz = [float(value) for value in require_film(len(O_indices), ts.dimensions[:3])]
         n_frames_used += 1
-        O_pos = u.atoms.positions[O_indices]
+        O_pos = np.array(u.atoms.positions[O_indices], dtype=float)
+        # Put the slab center at z = 0. A periodic shift leaves every
+        # distance unchanged, and an uncentred trajectory (such as a
+        # restarted endpoint run) then bins the same as a centred one.
+        _angle = 2.0 * np.pi * O_pos[:, 2] / Lz
+        _center = np.arctan2(np.mean(np.sin(_angle)), np.mean(np.cos(_angle))) * Lz / (2.0 * np.pi)
+        O_pos[:, 2] = (O_pos[:, 2] - _center + 0.5 * Lz) % Lz - 0.5 * Lz
         z = O_pos[:, 2]
         # ========================================================
         # DEPTH-RESOLVED IN-PLANE STRUCTURE FACTOR

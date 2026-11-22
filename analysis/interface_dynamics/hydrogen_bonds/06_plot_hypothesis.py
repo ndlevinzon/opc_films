@@ -285,7 +285,7 @@ def main():
     made=[]
     for metric in METRICS:
         if curves(rep,metric,a.out):made.append(metric)
-    for metric in ['p_D2A1','p_D1A2','p_acceptor_deficient_donor_saturated','p_defect_outOH_joint',
+    for metric in ['p_defect','p_D2A1','p_D1A2','p_acceptor_deficient_donor_saturated','p_defect_outOH_joint',
       'p_outOH_given_defect','p_under_with_four_nearby','p_under_with_lt_four_nearby']:
         paired(rep,metric,a.out,a.rate)
     decomposition(rep,a.out,a.rate)
