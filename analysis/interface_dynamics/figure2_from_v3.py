@@ -95,8 +95,10 @@ def main():
             vf=f.parent.parent.parent/'regional_dyn'/f.parent.name/'event_samples.csv'
         if not vf.exists() and a.v2_root and rate not in ('',):
             vf=Path(a.v2_root)/rep/'ramp_nvt'/f"{directory_code(rate)}K_ns"/chunk/'event_samples.csv'
-        if ef.exists() and vf.exists():
-            hb=pd.read_csv(ef);ev=pd.read_csv(vf)
+        # Event joins are only analysed at the plotted rate; joining every row runs out of memory.
+        if ef.exists() and vf.exists() and rate==str(a.rate):
+            needed_cols=['origin','ref','region','ref_angle_late_rad','shell_move_early_A']
+            hb=pd.read_csv(ef);ev=pd.read_csv(vf,usecols=lambda c:c in needed_cols)
             common=['origin','ref','region'];needed=set(common+['ref_angle_late_rad','shell_move_early_A'])
             if needed.issubset(ev) and set(common).issubset(hb):
                 merged=ev.merge(hb,on=common,how='inner',validate='one_to_one')
