@@ -19,7 +19,7 @@ ensure_analysis_on_path(__file__)
 from common.constants import HOLD_DISCARD_FRACTION, REGION_BIN_A, SEEDS, load_adopted_qstar
 from opcfilm.config import CONFIG
 from common.slab import region_masks, slab_geometry, water_indices
-from common.trajectory import cooling_window_lag_cap_ps, discard_frame_count, frame_spacing_ps, hold_lag_times_ps
+from common.trajectory import cooling_window_lag_cap_ps, continuation_frame_spacing_ps, discard_frame_count, hold_lag_times_ps, lag_pair_ok
 
 REGIONS=('awi','awi_outer','interior')
 
@@ -122,7 +122,8 @@ def sample_refs(z_relative, depth, nref, rng):
 def analyze(args):
     u=mda.Universe(args.top,args.traj,format="NCDF");oi,hi=waters(u)
     nframe=len(u.trajectory)
-    dt=frame_spacing_ps([float(ts.time) for ts in u.trajectory])
+    frame_times=np.array([float(ts.time) for ts in u.trajectory])
+    dt,njoin=continuation_frame_spacing_ps(frame_times)
     duration_ps=(nframe-1)*dt
     if args.hold and not args.lags_ps:
         lag_ps=hold_lag_times_ps(duration_ps, dt)
@@ -157,6 +158,8 @@ def analyze(args):
         coord=np.array([len(x) for x in shell],float)
         # Regular relaxation curves
         for lag in lags:
+            # A pair across a segment join is used only when its true separation matches the lag.
+            if not lag_pair_ok(frame_times,t0,lag,dt):continue
             ts=u.trajectory[int(t0+lag)];O1,M1,L1=frame_arrays(ts,oi,hi)
             if np.max(abs(L1-L))>args.box_tolerance:raise RuntimeError('Box length varies; no constant-cell endpoint correction')
             dr=wrap_diff(O1[refs]-r0,L); drxy=np.linalg.norm(dr[:,:2],axis=1)
@@ -169,7 +172,7 @@ def analyze(args):
                                   fs_sum=float(fs[sel].sum()),c1_sum=float(c1[sel].sum()),c2_sum=float(c2[sel].sum()),
                                   drxy2_sum=float((drxy[sel]**2).sum()),coord_sum=float(coord[sel].sum())))
         # Two consecutive, nonoverlapping event intervals, origin->mid->end
-        if t0+2*event_delta<nframe:
+        if t0+2*event_delta<nframe and lag_pair_ok(frame_times,t0,event_delta,dt) and lag_pair_ok(frame_times,t0+event_delta,event_delta,dt):
             tm=u.trajectory[int(t0+event_delta)]; Om,Mm,Lm=frame_arrays(tm,oi,hi)
             te=u.trajectory[int(t0+2*event_delta)]; Oe,Me,Le=frame_arrays(te,oi,hi)
             if max(np.max(abs(Lm-L)),np.max(abs(Le-L)))>args.box_tolerance:raise RuntimeError('Box changes')
@@ -194,7 +197,7 @@ def analyze(args):
     pd.DataFrame(accum).to_csv(out/'origin_relaxation.csv',index=False)
     pd.DataFrame(ev).to_csv(out/'event_samples.csv',index=False)
     pd.DataFrame(qc).to_csv(out/'origin_qc.csv',index=False)
-    meta=dict(top=args.top,traj=args.traj,nwater=len(oi),nframes=nframe,dt_ps=dt,lag_ps=[float(l*dt) for l in lags],
+    meta=dict(top=args.top,traj=args.traj,nwater=len(oi),nframes=nframe,dt_ps=dt,segment_joins=njoin,lag_ps=[float(l*dt) for l in lags],
               event_interval_ps=event_delta*dt,norigins=len(qc),nref_per_region=args.nref_per_region,
               seed=args.seed,q_anginv=args.q_anginv,shell_cutoff_A=args.shell_cutoff,
               hold=bool(args.hold),max_lag_ps=max_lag_ps,window_temperature_drop_K=args.window_temperature_drop_K,

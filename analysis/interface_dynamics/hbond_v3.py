@@ -18,7 +18,7 @@ from common.constants import (
 )
 from opcfilm.config import CONFIG
 from common.slab import directed_hydrogen_bonds
-from common.trajectory import cooling_window_lag_cap_ps, discard_frame_count, frame_spacing_ps
+from common.trajectory import cooling_window_lag_cap_ps, continuation_frame_spacing_ps, discard_frame_count, lag_pair_ok
 from analyze_v2 import waters, frame_arrays, gds_depth, sample_refs
 
 def hb_pairs(O, H, L, refs, dist_cut=HBOND_OO_CUTOFF_A, angle_cut=HBOND_ANGLE_DEG):
@@ -55,7 +55,8 @@ def main():
     p.add_argument('--max-lag-temperature-drop-K',type=float,default=CONFIG.dynamics.cooling_lag_cap_K,help='Cooling-window lag cap. Ignored with --hold.')
     p.add_argument('--v2-events',default=None,help='Use exact V2 origin and reference water identities for event-model join');p.add_argument('--distance',type=float,default=HBOND_OO_CUTOFF_A);p.add_argument('--angle',type=float,default=HBOND_ANGLE_DEG);p.add_argument('--seed',type=int,default=SEEDS['hydrogen_bond_persistence'])
     args=p.parse_args();u=mda.Universe(args.top,args.traj if len(args.traj)>1 else args.traj[0],format="NCDF");oi,hi=waters(u)
-    dt=frame_spacing_ps([float(ts.time) for ts in u.trajectory])
+    frame_times=np.array([float(ts.time) for ts in u.trajectory])
+    dt,njoin=continuation_frame_spacing_ps(frame_times)
     nframe=len(u.trajectory)
     duration_ps=(nframe-1)*dt
     max_lag_ps=duration_ps if args.hold else cooling_window_lag_cap_ps(
@@ -96,6 +97,8 @@ def main():
             ref=int(ref);b=assigned_pairs(initial,ref)
             dist.append(dict(origin=int(origin),ref=ref,region=idmap[ref],n_hb=len(b),n_donor=sum(x[0]==ref for x in b),n_accept=sum(x[1]==ref for x in b)))
         for lag in lags:
+            # A pair across a segment join is used only when its true separation matches the lag.
+            if not lag_pair_ok(frame_times,origin,lag,dt):continue
             O1,H1,L1=get_frame(u,origin+lag,oi,hi)
             if np.max(abs(L-L1))>.02:raise ValueError('Box varies')
             tree1=cKDTree(O1,boxsize=L1)
@@ -107,7 +110,7 @@ def main():
                 if not old:continue
                 present=len(old & b1)
                 curves.append(dict(origin=int(origin),ref=ref,region=idmap[ref],lag_ps=lag*dt,n_initial=len(old),n_retained=present))
-        if origin+2*evdelta<len(u.trajectory):
+        if origin+2*evdelta<len(u.trajectory) and lag_pair_ok(frame_times,origin,evdelta,dt):
             Om,Hm,Lm=get_frame(u,origin+evdelta,oi,hi)
             treem=cKDTree(Om,boxsize=Lm)
             nnm=treem.query_ball_point(Om[refs],args.distance)
@@ -123,5 +126,5 @@ def main():
     pd.DataFrame(dist).to_csv(out/'hb_coord_samples.csv',index=False)
     pd.DataFrame(events).to_csv(out/'hb_event_samples.csv',index=False)
     pd.DataFrame(qc).to_csv(out/'hb_qc.csv',index=False)
-    (out/'hb_metadata.json').write_text(json.dumps(dict(traj=args.traj,dt_ps=dt,hold=bool(args.hold),max_lag_ps=max_lag_ps,origins=len(origins),distance_A=args.distance,angle_deg=args.angle,seed=args.seed,region_bin_A=REGION_BIN_A,notes='Intermittent original-partner persistence at lagged snapshots. Not continuous survival. Cooling-window lags use the same temperature cap as analyze_v2.py unless --hold is set. Retention is compared at 320 ps; the stored list ends at 640 ps and is not extended on a hold. Snapshot resolution limits exchange detection. Water IDs follow topology residue order. Region at initial origin. Hydrogen bonds use slab.directed_hydrogen_bonds.'),indent=2))
+    (out/'hb_metadata.json').write_text(json.dumps(dict(traj=args.traj,dt_ps=dt,segment_joins=njoin,hold=bool(args.hold),max_lag_ps=max_lag_ps,origins=len(origins),distance_A=args.distance,angle_deg=args.angle,seed=args.seed,region_bin_A=REGION_BIN_A,notes='Intermittent original-partner persistence at lagged snapshots. Not continuous survival. Cooling-window lags use the same temperature cap as analyze_v2.py unless --hold is set. Retention is compared at 320 ps; the stored list ends at 640 ps and is not extended on a hold. Snapshot resolution limits exchange detection. Water IDs follow topology residue order. Region at initial origin. Hydrogen bonds use slab.directed_hydrogen_bonds.'),indent=2))
 if __name__=='__main__':main()

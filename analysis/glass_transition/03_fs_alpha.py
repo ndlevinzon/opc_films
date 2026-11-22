@@ -30,7 +30,7 @@ from common.paths import ensure_analysis_on_path
 ensure_analysis_on_path(__file__)
 from common.constants import HOLD_DISCARD_FRACTION, load_adopted_qstar
 from common.slab import water_indices
-from common.trajectory import frame_spacing_ps
+from common.trajectory import continuation_frame_spacing_ps, lag_pair_ok
 
 import MDAnalysis as mda
 import numpy as np
@@ -172,6 +172,7 @@ def read_corrected_xy(
     first_box = None
     last_box = None
     max_box_change = 0.0
+    global_frame = 0
 
     for tr in trajs:
         print(f"Reading native trajectory: {tr}")
@@ -184,7 +185,11 @@ def read_corrected_xy(
             time = np.asarray(nc.variables["time"][:], dtype=float)
             nframes = xyz.shape[0]
 
-            for f in range(0, nframes, stride):
+            # Stride over the joined trajectory, not per segment, so a
+            # segment boundary never shortens a strided step.
+            first_local = (-global_frame) % stride
+            global_frame += nframes
+            for f in range(first_local, nframes, stride):
                 selected_times.append(float(time[f]))
                 wrapped = np.asarray(xyz[f, oxygen_idx, :2], dtype=np.float64)
                 box_xy = _frame_box_xy(nc, f, fallback_box_xy)
@@ -216,7 +221,7 @@ def read_corrected_xy(
         raise RuntimeError("No trajectory frames were read.")
 
     xy = np.stack(frames, axis=0)
-    dt_selected_ps = frame_spacing_ps(selected_times, override=frame_ps)
+    dt_selected_ps, n_joins = continuation_frame_spacing_ps(selected_times, override=frame_ps)
     if discard_fraction:
         discard_ps = float(discard_fraction) * (len(xy) - 1) * dt_selected_ps
 
@@ -226,7 +231,10 @@ def read_corrected_xy(
     if discard_frames > 0:
         xy = xy[discard_frames:]
 
-    times = np.arange(len(xy), dtype=np.float64) * dt_selected_ps
+    # True frame times, relative to the first kept frame. Segment joins make
+    # them differ from a uniform grid; lag pairs are checked against them.
+    times = np.asarray(selected_times[discard_frames:], dtype=np.float64)
+    times = times - times[0]
 
     print()
     print("Trajectory preprocessing")
@@ -234,6 +242,7 @@ def read_corrected_xy(
     print(f"Selected frames loaded:       {len(xy)}")
     print(f"Selected oxygen atoms:        {len(oxygen_idx)}")
     print(f"Effective frame spacing:      {dt_selected_ps:.6f} ps")
+    print(f"Segment joins accepted:       {n_joins}")
     print(f"Discarded initial time:       {discard_frames * dt_selected_ps:.3f} ps")
     print(f"Discard fraction requested:   {discard_fraction:g}")
     print(f"Usable duration:              {times[-1] / 1000.0:.6f} ns")
@@ -307,7 +316,7 @@ def choose_origins(nframes, lag, max_origins):
     )
 
 
-def fs_for_lag(xy, lag, q, max_origins, origin_batch):
+def fs_for_lag(xy, lag, q, max_origins, origin_batch, times=None, dt_ps=None):
     """Mean Fs and spread across per-origin particle averages.
 
     Parameters
@@ -322,6 +331,12 @@ def fs_for_lag(xy, lag, q, max_origins, origin_batch):
         Maximum number of time origins per lag.
     origin_batch : 
         Number of time origins evaluated at once.
+    times : array_like, optional
+        True frame times in picoseconds. When given, origins whose pair
+        crosses a segment join with a time error beyond
+        ``JOIN_LAG_ATOL_PS`` or ``JOIN_LAG_RTOL`` are dropped.
+    dt_ps : float, optional
+        Spacing within segments. Required with ``times``.
 
     Returns
     -------
@@ -338,6 +353,9 @@ def fs_for_lag(xy, lag, q, max_origins, origin_batch):
         }
 
     origins = choose_origins(nframes, lag, max_origins)
+    if times is not None and len(origins):
+        # Drop pairs whose true separation across a segment join is off the lag.
+        origins = origins[lag_pair_ok(times, origins, lag, dt_ps)]
     if len(origins) == 0:
         return {
             "Fs_parallel": np.nan,
@@ -468,6 +486,7 @@ def analyze_block(
     linear_early,
     max_origins,
     origin_batch,
+    times=None,
 ):
     """Scattering function and 1/e time of one trajectory block.
 
@@ -489,6 +508,8 @@ def analyze_block(
         Maximum number of time origins per lag.
     origin_batch : 
         Number of time origins evaluated at once.
+    times : array_like, optional
+        True frame times of the block, passed to :func:`fs_for_lag`.
 
     Returns
     -------
@@ -510,6 +531,8 @@ def analyze_block(
             q,
             max_origins,
             origin_batch,
+            times=times,
+            dt_ps=dt_ps,
         )
         rows.append({
             "lag_frames": int(lag),
@@ -677,6 +700,7 @@ def main():
             args.linear_early_lags,
             args.max_origins,
             args.origin_batch,
+            times=times[start:end],
         )
 
         for row in cdf.to_dict("records"):

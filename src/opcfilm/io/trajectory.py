@@ -133,6 +133,100 @@ def frame_spacing_ps(times, override=None, rtol=1e-3, atol=1e-3):
     return spacing
 
 
+# A hold or endpoint is joined from restarted segments. Each restart begins
+# from a restart file written at an arbitrary step, so the first frame of a
+# segment is 1 to 10 ps later than the 10 ps grid of the previous segment.
+# The dynamics are continuous; only the sampling grid shifts at the join.
+# A lag pair that crosses a join is kept when its true time separation is
+# within these limits of the nominal lag, and dropped otherwise.
+JOIN_LAG_ATOL_PS = 0.5
+JOIN_LAG_RTOL = 0.01
+
+
+def continuation_frame_spacing_ps(times, override=None, rtol=1e-3, atol=1e-3):
+    """Spacing of a trajectory joined from restarted segments.
+
+    Steps within a segment must equal the spacing. A step longer than the
+    spacing and shorter than twice the spacing is accepted as a segment
+    join. Any other step is an error.
+
+    Parameters
+    ----------
+    times : array_like
+        Frame times in picoseconds, in the order they will be analyzed.
+    override : float, optional
+        Spacing claimed by the caller. It must match the file.
+    rtol, atol : float, optional
+        Tolerance on a regular step, as in :func:`frame_spacing_ps`.
+
+    Returns
+    -------
+    spacing : float
+        Spacing within segments, in picoseconds.
+    joins : int
+        Number of steps accepted as segment joins.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two times are present, time does not increase, or a
+        step is neither regular nor a segment join.
+    """
+    times = np.asarray(times, dtype=float)
+    if times.size < 2:
+        raise ValueError("At least two frames are required to read the spacing.")
+    step = np.diff(times)
+    if not np.all(np.isfinite(step)) or np.any(step <= 0.0):
+        raise ValueError("Trajectory time is not strictly increasing.")
+    spacing = float(np.median(step))
+    tolerance = max(atol, rtol * spacing)
+    regular = np.abs(step - spacing) <= tolerance
+    join = ~regular & (step > spacing) & (step < 2.0 * spacing + tolerance)
+    bad = ~regular & ~join
+    if np.any(bad):
+        first = int(np.flatnonzero(bad)[0])
+        raise ValueError(
+            f"Frame spacing is not uniform: median {spacing:g} ps, step "
+            f"{step[first]:g} ps after frame {first} is not a segment join."
+        )
+    if override is not None and abs(float(override) - spacing) > tolerance:
+        raise ValueError(
+            f"Requested frame spacing {override:g} ps disagrees with the "
+            f"trajectory time spacing {spacing:g} ps."
+        )
+    return spacing, int(np.count_nonzero(join))
+
+
+def lag_pair_ok(times, start, lag, spacing, rtol=JOIN_LAG_RTOL, atol=JOIN_LAG_ATOL_PS):
+    """Whether frame pairs separated by ``lag`` frames have the nominal lag.
+
+    Parameters
+    ----------
+    times : array_like
+        Frame times in picoseconds.
+    start : int or array_like of int
+        First frame of each pair.
+    lag : int
+        Separation in frames.
+    spacing : float
+        Spacing within segments, in picoseconds.
+    rtol, atol : float, optional
+        Allowed error on the time separation, relative to the nominal lag
+        and in picoseconds. The larger of the two applies.
+
+    Returns
+    -------
+    bool or numpy.ndarray of bool
+        True where ``times[start + lag] - times[start]`` is within the
+        tolerance of ``lag * spacing``.
+    """
+    times = np.asarray(times, dtype=float)
+    start = np.asarray(start, dtype=int)
+    nominal = float(lag) * float(spacing)
+    actual = times[start + int(lag)] - times[start]
+    return np.abs(actual - nominal) <= max(float(atol), float(rtol) * nominal)
+
+
 def count_waters(topology):
     """Count water residues in an Amber topology.
 
