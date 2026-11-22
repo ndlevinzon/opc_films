@@ -86,6 +86,19 @@ def cooling_window_lag_cap_ps(duration_ps, max_temperature_drop_K=None, window_t
     return float(duration_ps) * float(max_temperature_drop_K) / float(window_temperature_drop_K)
 
 
+def _step_tolerance(times, spacing, rtol, atol):
+    """Tolerance on a frame step, in picoseconds.
+
+    AMBER NetCDF stores time in single precision. Above 262144 ps one unit
+    in the last place is 0.03125 ps, so a step between two stored times can
+    differ from the spacing by that much. The tolerance is never smaller
+    than two such units at the largest stored time.
+    """
+    largest = float(np.max(np.abs(times)))
+    float32_step = float(np.spacing(np.float32(largest)))
+    return max(float(atol), float(rtol) * float(spacing), 2.0 * float32_step)
+
+
 def frame_spacing_ps(times, override=None, rtol=1e-3, atol=1e-3):
     """Return the uniform spacing of a time series.
 
@@ -119,7 +132,7 @@ def frame_spacing_ps(times, override=None, rtol=1e-3, atol=1e-3):
     if not np.all(np.isfinite(step)) or np.any(step <= 0.0):
         raise ValueError("Trajectory time is not strictly increasing.")
     spacing = float(np.median(step))
-    tolerance = max(atol, rtol * spacing)
+    tolerance = _step_tolerance(times, spacing, rtol, atol)
     if float(np.max(np.abs(step - spacing))) > tolerance:
         raise ValueError(
             f"Frame spacing is not uniform: median {spacing:g} ps, "
@@ -179,7 +192,7 @@ def continuation_frame_spacing_ps(times, override=None, rtol=1e-3, atol=1e-3):
     if not np.all(np.isfinite(step)) or np.any(step <= 0.0):
         raise ValueError("Trajectory time is not strictly increasing.")
     spacing = float(np.median(step))
-    tolerance = max(atol, rtol * spacing)
+    tolerance = _step_tolerance(times, spacing, rtol, atol)
     regular = np.abs(step - spacing) <= tolerance
     join = ~regular & (step > spacing) & (step < 2.0 * spacing + tolerance)
     bad = ~regular & ~join

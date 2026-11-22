@@ -61,3 +61,22 @@ def test_lag_pairs_across_a_join():
     # At 100 frames (1 ns) a 6 ps error is under 1 percent: every pair kept.
     assert lag_pair_ok(times, start[:300], 100, 10.0).all()
     assert JOIN_LAG_ATOL_PS < 1.0
+
+
+def test_float32_rounding_late_in_a_long_hold():
+    # hold-r1-4.44-150 runs from 35 ns to 343 ns. Above 262144 ps a float32
+    # time step is 0.03125 ps, three times the old 0.01 ps tolerance.
+    segments, t = [], 34943.781
+    for gap in (None, 16.797, 12.223, 19.609, 10.0):
+        if gap is not None:
+            t = segments[-1][-1] + gap
+        segments.append(t + 10.0 * np.arange(8000))
+    times = np.concatenate(segments).astype(np.float32).astype(float)
+    assert times[-1] > 262144.0
+    assert np.abs(np.diff(times) - 10.0).max() > 0.01
+    spacing, joins = continuation_frame_spacing_ps(times)
+    assert spacing == pytest.approx(10.0, abs=0.04)
+    assert joins == 3
+    tail = times[-8000:]
+    assert tail[0] > 262144.0
+    assert frame_spacing_ps(tail) == pytest.approx(10.0, abs=0.04)
