@@ -6,7 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "opcfilm"
 version = "0.1.0"
 description = "Analysis of a free-standing OPC water film."
+license = {file = "LICENSE"}
 requires-python = ">=3.12"
+classifiers = ["License :: OSI Approved :: MIT License"]
 dependencies = [
     "numpy==2.5.3",
     "scipy==1.18.0",

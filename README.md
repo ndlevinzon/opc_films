@@ -38,7 +38,7 @@ $OPC_DATA_ROOT/build/opc_slab.prmtop
 
 Amber executables come from `AMBERHOME`. Cluster account, partition, and module names are passed on the `sbatch` command line rather than stored in the scripts. See `MD/README.md` and `analysis/README.md`.
 
-`environment.txt` is the package list from the environment used to check this archive. It includes AmberTools, OVITO, netCDF4, ParmEd, and scikit-learn. Production `pmemd` is still the binary named by `AMBERHOME`. This archive does not contain a license; one has not been chosen.
+`environment.txt` is the package list from the environment used to check this archive. It includes AmberTools, OVITO, netCDF4, ParmEd, and scikit-learn. Production `pmemd` is still the binary named by `AMBERHOME`. The package is released under the MIT License; see `LICENSE`.
 
 ## Shared definitions
 
@@ -48,4 +48,4 @@ One bulk is used for every regional comparison: `|z| <= 15` Å (`BULK_HALFWIDTH_
 
 `q`, Chau–Hardwick `Sk`, and the local structure index are computed in `src/opcfilm/structure/order.py`. The Gaussian neighbor score is named `radial_regularity` and is not `Sk`. Water counts and box lengths are read from the topology and the frame. The numbers in `config/project.yaml` are the parameter sheet. `common/constants.py` loads that file. The scripts stop if a trajectory disagrees with the film size in the sheet.
 
-`opcfilm synthetic` runs every stage on a 2,000-water film. `opcfilm catalog build --root $OPC_DATA_ROOT` writes `config/manifest.tsv`. OVITO is an optional dependency (`opcfilm[chill]`) because the pinned build is the conda package. No license has been chosen.
+`opcfilm synthetic` runs every stage on a 2,000-water film. `opcfilm catalog build --root $OPC_DATA_ROOT` writes `config/manifest.tsv`. OVITO is an optional dependency (`opcfilm[chill]`) because the pinned build is the conda package.
