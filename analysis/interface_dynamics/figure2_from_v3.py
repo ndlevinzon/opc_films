@@ -90,6 +90,9 @@ def main():
         if cf.exists() and cf.stat().st_size:curves.append(pd.read_csv(cf).assign(**ident))
         ef=f.parent/'hb_event_samples.csv'
         vf=f.parent/'event_samples.csv'
+        if not vf.exists():
+            # Workflow layout: results/hbond/<row_id>/ and results/regional_dyn/<row_id>/.
+            vf=f.parent.parent.parent/'regional_dyn'/f.parent.name/'event_samples.csv'
         if not vf.exists() and a.v2_root and rate not in ('',):
             vf=Path(a.v2_root)/rep/'ramp_nvt'/f"{directory_code(rate)}K_ns"/chunk/'event_samples.csv'
         if ef.exists() and vf.exists():

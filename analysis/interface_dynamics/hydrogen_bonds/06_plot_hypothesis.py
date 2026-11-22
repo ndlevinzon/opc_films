@@ -238,6 +238,9 @@ def main():
     a=p.parse_args();a.out.mkdir(parents=True,exist_ok=True)
     rows=load_manifest(a.manifest);frames=[];qcs=[];missing=[];kinds=set()
     for r in rows:
+        # The defects rule runs on ramps and holds only. A 78 K endpoint carries
+        # its source ramp rate but has no defects output, so it is not expected.
+        if r['kind']=='endpoint':continue
         rate=plotted_rate(r)
         if not rate or not np.isclose(float(rate),a.rate):continue
         root=a.outroot/str(r['row_id'])
