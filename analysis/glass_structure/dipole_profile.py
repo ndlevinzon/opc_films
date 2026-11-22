@@ -66,7 +66,7 @@ def water_indices(universe, resname, oxygen_name):
 
 
 WATER_MASS_G_MOL = CONFIG.film.water_molar_mass_g_mol
-AVOGADRO = 6.02214076e23
+AVOGADRO = CONFIG.film.avogadro_per_mol
 
 
 def slab_center(z, length):

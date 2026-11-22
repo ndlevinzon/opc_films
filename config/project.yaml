@@ -9,7 +9,7 @@ film:
   box_A: [194.567, 188.781, 300.0]
   water_molar_mass_g_mol: 18.01528
   number_density_divisor: 0.602214076
-  avogadro_per_mol: 6.02214076e23
+  avogadro_per_mol: 6.02214076e+23
   dt_ps: 0.002
 
 regions:

@@ -535,6 +535,40 @@ _SECTIONS = {
 }
 
 
+def _coerce(value, annotation):
+    """Convert a sheet value to the type its field declares.
+
+    PyYAML follows YAML 1.1, which reads a number such as ``6.02214076e23``
+    (exponent without a sign) as a string. Fields declared ``float`` or
+    ``int`` are converted, so such a value cannot reach arithmetic as text.
+
+    Parameters
+    ----------
+    value : object
+        Value from project.yaml.
+    annotation : type or str
+        The field's declared type.
+
+    Returns
+    -------
+    object
+        The converted value.
+
+    Raises
+    ------
+    ValueError
+        If a numeric field holds text that is not a number.
+    """
+    name = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", str(annotation))
+    if name == "float" and isinstance(value, (str, int)) and not isinstance(value, bool):
+        return float(value)
+    if name == "int" and isinstance(value, str):
+        return int(value)
+    if isinstance(value, tuple) and "float" in str(annotation):
+        return tuple(float(item) if isinstance(item, str) else item for item in value)
+    return value
+
+
 def _section(cls, payload):
     converted = {}
     for item in fields(cls):
@@ -543,7 +577,7 @@ def _section(cls, payload):
         value = payload[item.name]
         if isinstance(value, list):
             value = _tuple(value)
-        converted[item.name] = value
+        converted[item.name] = _coerce(value, item.type)
     return cls(**converted)
 
 
