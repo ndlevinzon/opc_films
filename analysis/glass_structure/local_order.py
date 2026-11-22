@@ -1078,6 +1078,14 @@ def main(argv=None):
         vecs_unit = vecs / norms[:, :, None]
         q_vals = shared_q(vecs_unit)
         sk_vals = shared_sk(dist4)
+        # Cosines of the six O-O-O angles between the four nearest
+        # neighbors, for P(theta). shared_q computes q from the same
+        # angles but does not return them.
+        pairs = [(i, j) for i in range(4) for j in range(i + 1, 4)]
+        cosines = np.stack(
+            [np.sum(vecs_unit[:, i, :] * vecs_unit[:, j, :], axis=1) for i, j in pairs],
+            axis=1,
+        )
         # ============================================================
         # LOCAL STRUCTURE INDEX
         # ============================================================
