@@ -109,7 +109,7 @@ trajectory:
   hold_ntwx: 5000
   cooling_frame_ps: 2.0
   hold_frame_ps: 10.0
-  production_cut_A: 9.0
+  production_cut_A: 8.0
   equilibration_cut_A: 8.0
   gamma_ln_per_ps: 2.0
   # The three replicas start cooling from the same min/step9.rst7 and differ by ig = -1.
