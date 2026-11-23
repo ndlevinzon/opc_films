@@ -543,8 +543,26 @@ def fig5a(results, out, stem):
 
 @panel("Fig5b_landscape_78K")
 def fig5b(results, out, stem):
-    """Bulk q, Sk and LSI landscape at 78 K."""
-    return _landscape(results, out, stem, 78.0, _shared_sk_range(results))
+    """Bulk q, Sk and LSI landscape at 78 K. Frees the per-water tables afterwards."""
+    try:
+        return _landscape(results, out, stem, 78.0, _shared_sk_range(results))
+    finally:
+        _LANDSCAPE_CACHE.clear()
+
+
+def _thumbnail(path, width=700):
+    """A cross-section image reduced for a grid cell, as 8-bit RGB.
+
+    The source images are print resolution. Read whole as floating point,
+    33 of them need many gigabytes; a cell is under 2 cm wide, so each is
+    shrunk on reading.
+    """
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image = image.convert("RGB")
+        image.thumbnail((width, width * 4))
+        return np.asarray(image)
 
 
 @panel("Fig5c_cross_sections")
@@ -568,7 +586,7 @@ def fig5c(results, out, stem):
             axis.set_xticks([])
             axis.set_yticks([])
             if (temperature, replica) in images:
-                axis.imshow(plt.imread(images[(temperature, replica)]))
+                axis.imshow(_thumbnail(images[(temperature, replica)]))
             if i == 0:
                 axis.set_title(f"{temperature} K", fontsize=8)
             if j == 0:
