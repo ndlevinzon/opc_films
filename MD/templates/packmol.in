@@ -1,0 +1,12 @@
+tolerance 2.0
+
+filetype pdb
+output opc_box.pdb
+
+structure opc_water.pdb
+  number 139000
+
+  inside box \
+      0.0 0.0 0.0 \
+      194.567 188.781 113.822
+end structure

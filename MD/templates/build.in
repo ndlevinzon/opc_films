@@ -1,0 +1,32 @@
+source leaprc.water.opc
+
+box = loadpdb opc_box.pdb
+
+saveamberparm box opc_box.prmtop opc_box.rst7
+
+quit
+
+3. Make the slab (cpptraj)
+a. 
+parm opc_box.prmtop
+trajin opc_box.rst7
+
+center :WAT mass origin
+image origin center familiar
+
+trajout opc_box_centered.rst7 restart
+run
+quit
+
+b.
+parm opc_box.prmtop
+trajin opc_box_centered.rst7
+
+parmbox x 194.567 y 188.781 z 150.0 alpha 90.0 beta 90.0 gamma 90.0 # z 300 for regular, z 150 for 50% box, original 194.567 188.781 113.822
+box x 194.567 y 188.781 z 150.0 alpha 90.0 beta 90.0 gamma 90.0     # z z 300 for regular, z 150 for 50% box 
+
+parmwrite out opc_slab.prmtop
+trajout opc_slab.rst7 restart
+
+run
+quit
