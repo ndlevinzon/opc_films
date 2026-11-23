@@ -156,7 +156,7 @@ NVT cooling ${TSTART} K to ${TEND} K
 
   ntc=2,
   ntf=2,
-  cut=9.0,
+  cut=8.0,
 
   ntb=1
   ntp=0
