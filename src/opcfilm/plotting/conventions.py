@@ -30,7 +30,10 @@ markers. A label that names both, such as ``Bulk − AWI``, is a contrast and
 keeps its style. Legend text says ``Bulk`` and ``AWI`` rather than
 ``interior`` and ``awi``.
 
-A panel that compares at most two labelled series is drawn in black, with
+A panel that shows both a bulk and an AWI series shows only those two
+classes: other region series, such as the outer AWI band, are removed.
+A panel that compares at most two labelled series, or whose series are all
+bulk or AWI (and do not also encode temperature), is drawn in black, with
 grey uncertainty bands. If the two series would then look the same, the
 second is dashed, or drawn with open markers. Panels with an overlay axis
 (``twinx`` or ``twiny``) keep their colors, which identify the axes.
@@ -50,6 +53,7 @@ _OUTSIDE_GAP = 0.02
 _BULK = re.compile(r"\b(bulk|interior|core)\b", re.IGNORECASE)
 _AWI = re.compile(r"\bawi\b|interface", re.IGNORECASE)
 _OUTER = re.compile(r"outer|\b0\s*[–-]\s*6\b", re.IGNORECASE)
+_TEMPERATURE_IN_LABEL = re.compile(r"\d\s*K\b")
 _REGION_LINESTYLE = {"bulk": "-", "awi": "--", "awi_outer": ":"}
 _LABEL_WORDS = ((re.compile(r"\binterior\b", re.IGNORECASE), "Bulk"), (re.compile(r"\bawi\b"), "AWI"))
 
@@ -234,8 +238,148 @@ def _differentiate(kind, artist):
         artist.set_facecolors("none")
 
 
+def _series_color(kind, artist):
+    """RGB of a series, or None."""
+    from matplotlib.colors import to_rgb
+
+    try:
+        if kind == "errorbar":
+            return to_rgb(artist.lines[0].get_color())
+        if kind == "line":
+            return to_rgb(artist.get_color())
+        faces = artist.get_facecolors()
+        return tuple(faces[0][:3]) if len(faces) else None
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def _remove_series(kind, artist):
+    """Take a series off its axes."""
+    if kind == "errorbar":
+        for child in artist.get_children():
+            try:
+                child.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        axis = artist.lines[0].axes if artist.lines[0] is not None else None
+        if axis is not None and artist in axis.containers:
+            axis.containers.remove(artist)
+        return
+    artist.remove()
+
+
+def _band_owner(collection, lines):
+    """The line an uncertainty band is centered on, or None.
+
+    Parameters
+    ----------
+    collection : matplotlib.collections.PolyCollection
+        Band from ``fill_between``.
+    lines : list of tuple
+        ``(axes, artist)`` candidates, artist a Line2D or an errorbar
+        container.
+
+    Returns
+    -------
+    object or None
+        The artist whose points lie closest to the band's middle, among
+        those the band covers.
+    """
+    import numpy as np
+
+    paths = collection.get_paths()
+    if not paths:
+        return None
+    vertices = np.concatenate([path.vertices for path in paths])
+    vx, vy = vertices[:, 0], vertices[:, 1]
+    best, best_score = None, np.inf
+    for _axis, artist in lines:
+        line = artist.lines[0] if hasattr(artist, "lines") else artist
+        if line is None:
+            continue
+        x, y = (np.asarray(v, dtype=float) for v in line.get_data())
+        finite = np.isfinite(x) & np.isfinite(y)
+        x, y = x[finite], y[finite]
+        if not len(x):
+            continue
+        span = np.ptp(vx) or 1.0
+        misses = []
+        for xi, yi in zip(x[:: max(1, len(x) // 40)], y[:: max(1, len(y) // 40)]):
+            near = np.abs(vx - xi) <= 1e-6 * span
+            if near.sum() < 2:
+                continue
+            low, high = vy[near].min(), vy[near].max()
+            misses.append(abs(yi - 0.5 * (low + high)) / max(high - low, 1e-12))
+        if len(misses) >= max(1, len(x[:: max(1, len(x) // 40)]) // 2):
+            score = float(np.mean(misses))
+            if score < best_score:
+                best, best_score = artist, score
+    return best if best_score <= 0.5 else None
+
+
+def _keep_bulk_and_awi(panel):
+    """Drop other region series from a panel that compares bulk with AWI.
+
+    A panel with a bulk series and an AWI series shows only those two
+    classes: series of other regions (the outer AWI band) are removed, with
+    any uncertainty band drawn in the same color, and their legend entries.
+    Panels without both classes are left alone, so a figure about the AWI
+    bands themselves keeps them.
+
+    Parameters
+    ----------
+    panel : list of matplotlib.axes.Axes
+        Primary axes and overlays of one panel.
+
+    Returns
+    -------
+    None
+        The panel is changed in place.
+    """
+    import numpy as np
+
+    entries = [(axis, kind, artist, label, region_of(label))
+               for axis in panel for kind, artist, label in _series(axis)]
+    regions = {region for *_, region in entries}
+    if not {"bulk", "awi"} <= regions:
+        return
+    if not any(region not in (None, "bulk", "awi") for *_, region in entries):
+        return
+    # Each band belongs to the line it is centered on. Bands are matched
+    # before any line is removed.
+    lines = [(axis, artist, region) for axis, kind, artist, _label, region in entries
+             if kind in ("line", "errorbar")]
+    doomed_bands = []
+    for axis in panel:
+        for collection in axis.collections:
+            if type(collection).__name__ not in ("PolyCollection", "FillBetweenPolyCollection"):
+                continue
+            owner = _band_owner(collection, [(a, art) for a, art, _r in lines if a is axis])
+            if owner is not None and lines[[art for _a, art, _r in lines].index(owner)][2] not in (None, "bulk", "awi"):
+                doomed_bands.append(collection)
+    dropped_labels = set()
+    for axis, kind, artist, label, region in entries:
+        if region not in (None, "bulk", "awi"):
+            dropped_labels.add(label)
+            _remove_series(kind, artist)
+    for collection in doomed_bands:
+        collection.remove()
+    for axis in panel:
+        legend = axis.get_legend()
+        if legend is None:
+            continue
+        pairs = [(h, t.get_text()) for h, t in zip(_handles(legend), legend.get_texts())
+                 if t.get_text() not in dropped_labels]
+        title = legend.get_title().get_text()
+        legend.remove()
+        if pairs:
+            axis.legend([h for h, _ in pairs], [t for _, t in pairs], title=title or None)
+
+
 def _style_series(panels):
-    """Region styles, black two-series panels, and Bulk/AWI labels."""
+    """Bulk and AWI only, region styles, black two-series panels, labels."""
+    for panel in panels:
+        _keep_bulk_and_awi(panel)
     for panel in panels:
         series = []
         for axis in panel:
@@ -245,15 +389,29 @@ def _style_series(panels):
                 if region is not None:
                     _style_region(kind, artist, region)
                 series.append((kind, artist))
-        if len(panel) > 1 or not 0 < len(series) <= 2:
+        labels = [artist.get_label() for _kind, artist in series]
+        regions = {region_of(label) for label in labels}
+        # A bulk-versus-AWI panel is black whatever its number of series
+        # (resolved values and bounds, say), unless the series also encode
+        # temperature, which keeps its colors.
+        bulk_vs_awi = bool(labels) and regions <= {"bulk", "awi"} and not any(_TEMPERATURE_IN_LABEL.search(l) for l in labels)
+        if len(panel) > 1 or not (0 < len(series) <= 2 or bulk_vs_awi):
             continue
         for kind, artist in series:
             _blacken(kind, artist)
-        # Error bars drawn without a label belong to the black series.
+        # Error bars, markers and scatter drawn without a label belong to the
+        # black series; unlabelled plain lines (reference lines) keep their color.
+        from matplotlib.collections import PathCollection
         from matplotlib.container import ErrorbarContainer
         for container in panel[0].containers:
             if isinstance(container, ErrorbarContainer):
                 _blacken("errorbar", container)
+        for collection in panel[0].collections:
+            if isinstance(collection, PathCollection):
+                _blacken("scatter", collection)
+        for line in panel[0].get_lines():
+            if line.get_marker() not in ("None", "none", "", " ", None):
+                _blacken("line", line)
         if len(series) == 2 and _signature(*series[0]) == _signature(*series[1]):
             _differentiate(*series[1])
         for collection in panel[0].collections:

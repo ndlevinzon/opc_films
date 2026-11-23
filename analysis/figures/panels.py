@@ -445,36 +445,85 @@ def _bulk_landscape(results, temperature):
     return _LANDSCAPE_CACHE[key]
 
 
-def _landscape(results, out, stem, temperature, sk_range):
-    """Population of (q, Sk) bins as bars colored by the median LSI."""
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401, registers the 3D projection
+LANDSCAPE_BINS = 25
+LANDSCAPE_Q_RANGE = (0.5, 1.0)
 
+
+def _landscape_grid(results, temperature, sk_range):
+    """Population fraction and median LSI on the (q, Sk) grid.
+
+    Parameters
+    ----------
+    results : pathlib.Path
+        The ``results`` directory.
+    temperature : float
+        300 or 78.
+    sk_range : tuple of float
+        Lower and upper Sk edges, shared by both temperatures.
+
+    Returns
+    -------
+    tuple
+        ``(q_edges, sk_edges, fraction, median_lsi)``. ``fraction`` is the
+        share of all bulk waters in each bin (summing to at most one), and
+        ``median_lsi`` is NaN where a bin is empty.
+    """
     data = _bulk_landscape(results, temperature)
-    q_edges = np.linspace(0.5, 1.0, 26)
-    sk_edges = np.linspace(sk_range[0], sk_range[1], 26)
+    q_edges = np.linspace(*LANDSCAPE_Q_RANGE, LANDSCAPE_BINS + 1)
+    sk_edges = np.linspace(sk_range[0], sk_range[1], LANDSCAPE_BINS + 1)
     counts, _, _ = np.histogram2d(data["q"], data["Sk"], bins=[q_edges, sk_edges])
     fraction = counts / max(len(data), 1)
     q_index = np.digitize(data["q"], q_edges) - 1
     sk_index = np.digitize(data["Sk"], sk_edges) - 1
-    keep = (q_index >= 0) & (q_index < len(q_edges) - 1) & (sk_index >= 0) & (sk_index < len(sk_edges) - 1)
-    median = pd.DataFrame({"i": q_index[keep], "j": sk_index[keep], "LSI": data["LSI"].to_numpy()[keep]}) \
-        .groupby(["i", "j"])["LSI"].median()
+    keep = (q_index >= 0) & (q_index < LANDSCAPE_BINS) & (sk_index >= 0) & (sk_index < LANDSCAPE_BINS)
+    median = np.full((LANDSCAPE_BINS, LANDSCAPE_BINS), np.nan)
+    table = pd.DataFrame({"i": q_index[keep], "j": sk_index[keep], "LSI": data["LSI"].to_numpy()[keep]})
+    for (i, j), value in table.groupby(["i", "j"])["LSI"].median().items():
+        median[i, j] = value
+    return q_edges, sk_edges, fraction, median
+
+
+def _landscape_floor(results, sk_range):
+    """Lowest and highest decade of the population, shared by both temperatures."""
+    values = np.concatenate([_landscape_grid(results, t, sk_range)[2].ravel() for t in (300.0, 78.0)])
+    positive = values[values > 0]
+    return int(np.floor(np.log10(positive.min()))), int(np.ceil(np.log10(positive.max())))
+
+
+def _landscape(results, out, stem, temperature, sk_range):
+    """Population of (q, Sk) bins as bars colored by the median LSI.
+
+    Bar heights are the log10 population fraction above a floor decade that
+    is the same for both temperatures, so the two panels share one scale.
+    All bars are drawn in one call, so Matplotlib orders their faces by depth
+    together and back bars are not painted over front ones.
+    """
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401, registers the 3D projection
+
+    q_edges, sk_edges, fraction, median = _landscape_grid(results, temperature, sk_range)
+    low, high = _landscape_floor(results, sk_range)
     norm = matplotlib.colors.Normalize(0.0, 0.2)
     cmap = matplotlib.colormaps["viridis"]
+    i, j = np.nonzero(fraction > 0)
+    dq, dsk = np.diff(q_edges)[0], np.diff(sk_edges)[0]
+    heights = np.log10(fraction[i, j]) - low
+    colors = cmap(norm(np.nan_to_num(median[i, j], nan=0.0)))
     figure = plt.figure(figsize=(6.4, 5.4))
     axis = figure.add_subplot(projection="3d")
-    dq, dsk = np.diff(q_edges)[0], np.diff(sk_edges)[0]
-    for (i, j), value in median.items():
-        if fraction[i, j] <= 0:
-            continue
-        axis.bar3d(q_edges[i], sk_edges[j], 0.0, dq * 0.9, dsk * 0.9, fraction[i, j],
-                   color=cmap(norm(value)), shade=True, linewidth=0)
-    axis.set_xlabel(r"Orientational tetrahedrality $q_{tet}$")
-    axis.set_ylabel(r"Translational tetrahedrality $S_k$")
-    axis.set_zlabel("Population fraction")
-    axis.set_title(f"Bulk water, {temperature:g} K")
+    axis.bar3d(q_edges[i], sk_edges[j], np.zeros_like(heights), dq * 0.9, dsk * 0.9, heights,
+               color=colors, shade=True, linewidth=0, zsort="max")
+    decades = np.arange(low, high + 1)
+    axis.set_zlim(0, high - low)
+    axis.set_zticks(decades - low)
+    axis.set_zticklabels([f"$10^{{{k}}}$" for k in decades])
     axis.set_xlim(q_edges[0], q_edges[-1])
     axis.set_ylim(sk_edges[0], sk_edges[-1])
+    axis.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
+    axis.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(5))
+    axis.set_xlabel(r"Orientational tetrahedrality $q_{tet}$", labelpad=8)
+    axis.set_ylabel(r"Translational tetrahedrality $S_k$", labelpad=14)
+    axis.set_zlabel("Population fraction (log)", labelpad=8)
+    axis.set_title(f"Bulk water, {temperature:g} K")
     bar = figure.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axis, shrink=0.6, pad=0.12)
     bar.set_label(r"Median LSI (Å$^2$)")
     return save(figure, out, stem)

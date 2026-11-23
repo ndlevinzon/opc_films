@@ -104,11 +104,26 @@ def test_two_series_are_black_with_region_styles():
     plt.close(figure)
 
 
-def test_three_series_keep_color():
+def test_outer_awi_is_dropped_and_panel_is_black():
     figure, axis = plt.subplots()
-    lines = [axis.plot([1, 2], [k, k + 1], color=f"C{k}", label=name)[0]
+    lines = [axis.plot([1, 2, 3], [k, k + 1, k + 2], color=f"C{k}", label=name)[0]
              for k, name in enumerate(["Bulk", "AWI", "AWI outer"])]
+    axis.fill_between([1, 2, 3], [1.8, 2.8, 3.8], [2.2, 3.2, 4.2], color="C2", alpha=0.2)
+    axis.legend()
     apply_figure_conventions(figure)
-    assert matplotlib.colors.same_color(lines[1].get_color(), "C1")
-    assert [line.get_linestyle() for line in lines] == ["-", "--", ":"]
+    assert lines[2].axes is None
+    assert len(axis.collections) == 0
+    assert matplotlib.colors.same_color(lines[1].get_color(), "black")
+    assert [line.get_linestyle() for line in lines[:2]] == ["-", "--"]
+    assert [t.get_text() for t in axis.get_legend().get_texts()] == ["Bulk", "AWI"]
+    plt.close(figure)
+
+
+def test_temperature_series_keep_color():
+    figure, axis = plt.subplots()
+    lines = [axis.plot([1, 2], [k, k + 1], color=f"C{k}", label=f"{t} K, {r}")[0]
+             for k, (t, r) in enumerate([(235, "Bulk"), (235, "AWI"), (195, "Bulk"), (195, "AWI")])]
+    apply_figure_conventions(figure)
+    assert matplotlib.colors.same_color(lines[2].get_color(), "C2")
+    assert [line.get_linestyle() for line in lines] == ["-", "--", "-", "--"]
     plt.close(figure)
