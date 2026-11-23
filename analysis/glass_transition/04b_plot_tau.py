@@ -90,9 +90,11 @@ def load_data(path):
             + ", ".join(missing)
         )
 
+    # Replicas are labels such as "r1"; as numbers they would all be NaN.
+    df["replica"] = df["replica"].astype(str).str.strip()
+
     for c in [
         "T_K",
-        "replica",
         "tau_1e_ns"
     ]:
 
@@ -106,6 +108,15 @@ def load_data(path):
         df["tau_plot_ns"] = pd.to_numeric(
             df["tau_plot_ns"],
             errors="coerce"
+        )
+
+    elif {"status", "tau_1e_ns", "tau_bound_ns"} <= set(df.columns):
+
+        # Tables collected before 04_collect_tau.py wrote tau_plot_ns:
+        # the crossing time when resolved, the censoring bound otherwise.
+        df["tau_plot_ns"] = pd.to_numeric(df["tau_1e_ns"], errors="coerce").where(
+            df["status"].eq("resolved"),
+            pd.to_numeric(df["tau_bound_ns"], errors="coerce"),
         )
 
     return df

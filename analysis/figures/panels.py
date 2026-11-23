@@ -389,18 +389,60 @@ def fig4f(results, out, stem):
     return _sq_map(results, out, stem, 78.0)
 
 
+def _read_bulk(path, value):
+    """One per-water metric of bulk water, read in chunks.
+
+    The per-water tables hold every sampled water of every analysed frame,
+    tens of millions of rows per endpoint. Only bulk rows and the needed
+    columns are kept, in single precision.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        ``<metric>_per_water_distribution.csv``.
+    value : str
+        Metric column, ``q``, ``Sk`` or ``LSI``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``frame``, ``oxygen_index`` and ``value`` for |z| within the bulk band.
+    """
+    parts = []
+    reader = pd.read_csv(
+        need(path),
+        usecols=["frame", "oxygen_index", "z_coord", value],
+        dtype={"frame": "int32", "oxygen_index": "int32", "z_coord": "float32", value: "float32"},
+        chunksize=2_000_000,
+    )
+    for chunk in reader:
+        inside = chunk["z_coord"].abs() <= BULK_HALFWIDTH_A
+        parts.append(chunk.loc[inside, ["frame", "oxygen_index", value]])
+    return pd.concat(parts, ignore_index=True)
+
+
+_LANDSCAPE_CACHE = {}
+
+
 def _bulk_landscape(results, temperature):
-    """Per-water q, Sk and LSI of bulk water, all replicas pooled."""
-    frames = []
-    for rep, directory in endpoint_dirs(results, temperature):
-        base = directory / "local_order"
-        keys = ["frame", "oxygen_index"]
-        q = pd.read_csv(need(base / "q_per_water_distribution.csv"), usecols=keys + ["z_coord", "q"])
-        sk = pd.read_csv(need(base / "Sk_per_water_distribution.csv"), usecols=keys + ["Sk"])
-        lsi = pd.read_csv(need(base / "LSI_per_water_distribution.csv"), usecols=keys + ["LSI"])
-        joined = q.merge(sk, on=keys).merge(lsi, on=keys)
-        frames.append(joined[joined["z_coord"].abs() <= BULK_HALFWIDTH_A].assign(replica=rep))
-    return pd.concat(frames, ignore_index=True)
+    """Per-water q, Sk and LSI of bulk water, all replicas pooled.
+
+    Read once per temperature and kept, because both landscape panels and
+    their shared S_k axis use it.
+    """
+    key = (str(results), float(temperature))
+    if key not in _LANDSCAPE_CACHE:
+        frames = []
+        for rep, directory in endpoint_dirs(results, temperature):
+            base = directory / "local_order"
+            keys = ["frame", "oxygen_index"]
+            joined = _read_bulk(base / "q_per_water_distribution.csv", "q")
+            joined = joined.merge(_read_bulk(base / "Sk_per_water_distribution.csv", "Sk"), on=keys)
+            joined = joined.merge(_read_bulk(base / "LSI_per_water_distribution.csv", "LSI"), on=keys)
+            frames.append(joined[["q", "Sk", "LSI"]])
+            del joined
+        _LANDSCAPE_CACHE[key] = pd.concat(frames, ignore_index=True)
+    return _LANDSCAPE_CACHE[key]
 
 
 def _landscape(results, out, stem, temperature, sk_range):
@@ -439,9 +481,8 @@ def _landscape(results, out, stem, temperature, sk_range):
 
 
 def _shared_sk_range(results):
-    """Common Sk axis for the two landscapes, from the pooled 1st percentile."""
-    values = pd.concat([_bulk_landscape(results, t)["Sk"] for t in (300.0, 78.0)])
-    low = float(np.nanpercentile(values, 1.0))
+    """Common Sk axis for the two landscapes, from the lower 1st percentile."""
+    low = min(float(np.nanpercentile(_bulk_landscape(results, t)["Sk"], 1.0)) for t in (300.0, 78.0))
     return (min(low, 0.997), 1.0)
 
 
@@ -933,12 +974,13 @@ def main(argv=None):
     for name, function in PANELS.items():
         if args.only and not any(name.startswith(prefix) for prefix in args.only):
             continue
+        print(f"...  {name}", flush=True)
         try:
             files = function(args.results.resolve(), args.out, name)
-            print(f"OK   {name}: {len(files)} files")
+            print(f"OK   {name}: {len(files)} files", flush=True)
         except Exception as error:  # one panel must not stop the others
             failed.append(f"{name}: {type(error).__name__}: {error}")
-            print(f"SKIP {name}: {type(error).__name__}: {error}")
+            print(f"SKIP {name}: {type(error).__name__}: {error}", flush=True)
             if not isinstance(error, FileNotFoundError):
                 traceback.print_exc()
     report = args.out / "FAILED_panels.txt"

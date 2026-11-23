@@ -279,7 +279,7 @@ def _sync_legend(legend, panel):
                 yield from drawing_areas(child)
 
     areas = list(drawing_areas(legend))
-    handles = getattr(legend, "legend_handles", None) or legend.legendHandles
+    handles = _handles(legend)
     for index, (handle, text) in enumerate(zip(handles, legend.get_texts())):
         label = normalize_label(text.get_text())
         text.set_text(label)
@@ -397,6 +397,14 @@ def _set_loc(legend, location):
         legend._set_loc(legend.codes[location])
 
 
+def _handles(legend):
+    """Legend handles under the current and the older Matplotlib name."""
+    handles = getattr(legend, "legend_handles", None)
+    if handles is None:
+        handles = getattr(legend, "legendHandles", [])
+    return list(handles)
+
+
 def _legend_entries(legend):
     """Handles and labels shown by a legend.
 
@@ -410,9 +418,7 @@ def _legend_entries(legend):
     list of tuple
         ``(handle, label)`` in display order.
     """
-    handles = getattr(legend, "legend_handles", None)
-    if handles is None:
-        handles = legend.legendHandles
+    handles = _handles(legend)
     labels = [text.get_text() for text in legend.get_texts()]
     return list(zip(handles, labels))
 

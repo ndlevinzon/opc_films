@@ -225,6 +225,14 @@ def main():
         df["status"] = df["tau_status"]
         print("Copied tau_status to status.")
 
+    # The value 04b_plot_tau.py draws: the crossing time when resolved, the
+    # censoring bound otherwise (shown there as an arrow).
+    if "tau_plot_ns" not in df.columns and "tau_1e_ns" in df.columns:
+        bound = pd.to_numeric(df.get("tau_bound_ns"), errors="coerce")
+        df["tau_plot_ns"] = pd.to_numeric(df["tau_1e_ns"], errors="coerce").where(
+            df["status"].eq("resolved"), bound
+        )
+
     if "status" not in df.columns:
         raise RuntimeError(
             "No status column. Collect 03_fs_alpha.py summaries, which "
