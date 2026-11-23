@@ -47,3 +47,6 @@ Set `OPC_DATA_ROOT` to the directory that contains `opc/` and `build/opc_slab.pr
 | LDA classifier, 0.80 Å probe free volume | `common/classifier.py` and `glass_structure/opc_vitrification_spatial_workflow/07_core_awi_lda_and_free_volume.py`. The render scripts are display-only. |
 | `C_V,app` and `α_app` | `cooling_path/opc_thermo_response/02_thermo_response.py`. |
 | Main-text Fig. 2 assembly | No single assembly script. The panels are `glass_transition/01b_plot_temp_vs_cooling_rate.py`, `cooling_path/06_plot_energetic_stabilization.py`, `cooling_path/04_summarize.py`, and the derivative script above. |
+| Capillary-wave table (SI) | `cooling_path/04c_capillary_table.py`, Snakemake rule `capillary_table`. Reads `results/capillary/<row_id>/capwave_*.dat`; writes `results/capillary_summary/`. γ₀ and κ′ are fitted from `capwave_spectrum.dat`; cpptraj's own Helfrich intercept from `capwave.log` is kept as `gamma0_log_mN_m`. |
+| f̃ half-point temperatures (SI) | `glass_structure/opc_vitrification_spatial_workflow/08_replot_core_awi_black.py` writes `half_point_summary.csv` next to `region_summary.tsv`. |
+| SI table sources | `si_tables/collect_si_tables.py`, Snakemake rule `si_tables`. Copies every table the SI quotes into `results/si_tables/<label>/` and writes `INDEX.md`. |

@@ -1202,7 +1202,7 @@ def make_plot(
             alpha=0.16,
             color=line.get_color(),
             linewidth=0,
-            label=r"$\pm 2$ SD across replicas",
+            label=rf"$\pm {float(args.band_sd):g}$ SD across replicas",
         )
 
     (

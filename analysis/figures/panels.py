@@ -24,7 +24,11 @@ SI
     SI_order_profiles, SI_ptheta, SI_chill, SI_sq_depth   (endpoints)
     SI_fv_radius        free volume against probe radius (holds)
     SI_conservation     mass conservation of the ramp profiles
-    SI_roughness, SI_capillary   capillary-wave outputs of the holds
+    SI_roughness        w(T) of both surfaces with the CWT scaling (capillary_summary)
+    SI_roughness_time   w against time on the r1 holds
+    SI_capillary        gamma(q) with the gamma_0 + kappa' q^2 fit (capillary_summary)
+    SI_capillary_spectrum  S(q) of the intrinsic surface, log-log
+    SI_derivative_window   3- versus 5-point derivatives (results/thermo)
 
 All curves follow ``opcfilm.plotting.conventions``: temperature axes run hot
 to cold, legends sit outside the panels, bulk is solid and AWI dashed, and
@@ -54,6 +58,7 @@ from common.paths import ensure_analysis_on_path
 ensure_analysis_on_path(__file__)
 
 from opcfilm.catalog import RATE_COLOR_BY_VALUE, load_manifest, result_directory
+from opcfilm.io.cpptraj import read_sets
 from opcfilm.config import CONFIG
 from opcfilm.stats.uncertainty import paired_student_interval
 
@@ -768,6 +773,21 @@ def _profiles(results, temperature, name):
     return pd.concat(frames, ignore_index=True)
 
 
+# A 10-Å slab is drawn only if, on average over replicas, it holds at least
+# this fraction of the sampled molecules of the most populated slab. Slabs
+# beyond the half-density surfaces hold a few vapor-side molecules whose
+# averages are noise.
+MIN_SLAB_FRACTION = 0.05
+
+
+def _populated_slabs(results, temperature, fraction=MIN_SLAB_FRACTION):
+    """Lower edges (Å) of the 10-Å slabs that hold enough sampled molecules."""
+    table = _profiles(results, temperature, "water_local_order_z_profile_10A.csv")
+    mean_count = table.groupby("z_lower")["count"].mean()
+    keep = mean_count[mean_count >= fraction * mean_count.max()]
+    return {round(float(z)) for z in keep.index}
+
+
 @panel("SI_order_profiles")
 def si_order_profiles(results, out, stem):
     """q, Sk and LSI against z at 300 and 78 K, with the 78 - 300 K change."""
@@ -775,6 +795,9 @@ def si_order_profiles(results, out, stem):
                ("mean_Sk_translational_tetrahedral", r"$\langle S_k \rangle$"),
                ("mean_LSI", r"$\langle$LSI$\rangle$ (Å$^2$)"))
     tables = {t: _profiles(results, t, "water_local_order_z_profile_10A.csv") for t in (300.0, 78.0)}
+    for t, table in tables.items():
+        kept = _populated_slabs(results, t)
+        tables[t] = table[table["z_lower"].round().isin(kept)]
     written = []
     for column, label in columns:
         figure, axis = plt.subplots(figsize=(5.4, 4.0))
@@ -822,7 +845,8 @@ def si_ptheta(results, out, stem):
         written += save(figure, out, f"{stem}_{name}")
     for temperature in (300.0, 78.0):
         table = tables[temperature]
-        populated = [c for c in windows if table[c].notna().any()]
+        kept = _populated_slabs(results, temperature)
+        populated = [c for c in windows if table[c].notna().any() and round(bounds[c][0]) in kept]
         figure, axis = plt.subplots(figsize=(6.0, 4.2))
         cmap = matplotlib.colormaps["viridis"]
         depth = {c: abs(0.5 * sum(bounds[c])) for c in populated}
@@ -830,7 +854,8 @@ def si_ptheta(results, out, stem):
         for column in sorted(populated, key=lambda c: depth[c]):
             curve = table.groupby("theta_deg")[column].mean()
             axis.plot(curve.index, curve.values, color=cmap(depth[column] / top), lw=0.9, label=column.replace("_", " "))
-        axis.set(xlabel=r"O–O–O angle $\theta$ (degrees)", ylabel=r"$P(\theta)$ (deg$^{-1}$)", title=f"{temperature:g} K")
+        axis.set(xlabel=r"O–O–O angle $\theta$ (degrees)", ylabel=r"$P(\theta)$ (deg$^{-1}$)",
+                 title=f"{temperature:g} K, slabs with ≥ {MIN_SLAB_FRACTION:.0%} of the central count")
         axis.grid(alpha=0.2)
         axis.legend(fontsize=6, ncol=2)
         written += save(figure, out, f"{stem}_{temperature:g}K_by_depth")
@@ -967,54 +992,183 @@ def read_cpptraj_table(path):
     return pd.DataFrame(rows, columns=names)
 
 
-def _hold_capillary(results, name):
-    """cpptraj capillary tables of the r1 holds, by temperature."""
-    found = []
-    for row in manifest_rows(results):
-        if row["kind"] != "hold" or row["replica"] != "r1":
-            continue
-        path = result_directory(results.parent, "capillary", row) / name
-        if path.is_file():
-            found.append((float(row["temperature_K"]), read_cpptraj_table(path)))
-    if not found:
-        raise FileNotFoundError(f"no results/capillary/<row>/{name}")
-    return sorted(found)
+def _capillary_summary(results, name):
+    """A table written by ``04c_capillary_table.py`` under ``results/capillary_summary``."""
+    return pd.read_csv(need(Path(results, "capillary_summary", name)))
 
 
 @panel("SI_roughness")
 def si_roughness(results, out, stem):
-    """Interface roughness against time on each r1 hold (first column against the second)."""
-    tables = _hold_capillary(results, "capwave_roughness.dat")
-    figure, axis = plt.subplots(figsize=(6.4, 4.2))
-    cmap = matplotlib.colormaps["plasma"]
-    temperatures = [t for t, _ in tables]
-    norm = matplotlib.colors.Normalize(min(temperatures), max(temperatures) + 0.2 * (max(temperatures) - min(temperatures) + 1))
-    for temperature, table in tables:
-        x, y = table.columns[0], table.columns[1]
-        axis.plot(table[x], table[y], lw=0.75, color=cmap(norm(temperature)), label=f"{temperature:g} K")
-    axis.set(xlabel=tables[0][1].columns[0], ylabel=tables[0][1].columns[1], title="Replica r1 holds")
+    """Capillary roughness of both surfaces on the holds against temperature, with the CWT scaling.
+
+    w is the replica mean ± 1 SD of the time-averaged roughness of each hold.
+    The CWT line is w(250 K) [(T/gamma_0(T)) / (250 K/gamma_0(250 K))]^(1/2).
+    """
+    table = _capillary_summary(results, "capillary_by_temperature.csv").sort_values("temperature_K")
+    figure, axis = plt.subplots(figsize=(5.8, 4.2))
+    for column, label, color, marker in (("w_upper_A", "Upper surface", "black", "o"),
+                                         ("w_lower_A", "Lower surface", "0.5", "s")):
+        if f"{column}_mean" not in table:
+            continue
+        axis.errorbar(table["temperature_K"], table[f"{column}_mean"], yerr=table[f"{column}_sd"],
+                      color=color, marker=marker, ms=4, lw=1.1, capsize=2, label=label)
+    if "w_CWT_A" in table and table["w_CWT_A"].notna().any():
+        axis.plot(table["temperature_K"], table["w_CWT_A"], color="black", ls=":", lw=1.1,
+                  label=r"CWT scaling from 250 K")
+    italic = table[table.get("italic", False) == True]  # noqa: E712
+    for temperature in italic["temperature_K"]:
+        axis.axvspan(temperature - 4, temperature + 4, color="0.9", lw=0, zorder=0)
+    axis.set(xlabel="Hold temperature (K)", ylabel="Capillary roughness $w$ (Å)")
     axis.grid(alpha=0.2)
-    axis.legend(fontsize=7, ncol=2)
+    axis.legend()
+    return save(figure, out, stem)
+
+
+@panel("SI_roughness_time")
+def si_roughness_time(results, out, stem):
+    """Mean roughness of the two surfaces against time on each hold, replica r1."""
+    rows = {row["row_id"]: row for row in manifest_rows(results) if row["kind"] == "hold"}
+    figure, axis = plt.subplots(figsize=(6.4, 4.2))
+    cmap = matplotlib.colormaps["coolwarm"]
+    drawn = 0
+    temperatures = sorted({float(r["temperature_K"]) for r in rows.values()})
+    norm = matplotlib.colors.Normalize(min(temperatures), max(temperatures)) if temperatures else None
+    for row_id, row in sorted(rows.items(), key=lambda item: -float(item[1]["temperature_K"])):
+        if row["replica"] != "r1":
+            continue
+        path = result_directory(results.parent, "capillary", row) / "capwave_roughness.dat"
+        if not path.is_file():
+            continue
+        table = read_sets(path)
+        analyzed_ns = (float(row["duration_ps"]) - float(row.get("discard_ps") or 0.0)) / 1000.0
+        time_ns = (table["x"] - table["x"].iloc[0]) * analyzed_ns / max(len(table), 1)
+        temperature = float(row["temperature_K"])
+        axis.plot(time_ns, table["wmean"], lw=0.6, color=cmap(norm(temperature)), label=f"{temperature:g} K")
+        drawn += 1
+    if not drawn:
+        raise FileNotFoundError("no results/capillary/<row>/capwave_roughness.dat for replica r1")
+    axis.set(xlabel="Time after the discard (ns)", ylabel="Roughness of the two surfaces, $w$ (Å)",
+             title="Replica r1")
+    axis.grid(alpha=0.2)
+    axis.legend(fontsize=7, ncol=2, title="Hold")
     return save(figure, out, stem)
 
 
 @panel("SI_capillary")
 def si_capillary(results, out, stem):
-    """Capillary-wave spectrum of each r1 hold (first column against the second, log-log)."""
-    tables = _hold_capillary(results, "capwave_spectrum.dat")
-    figure, axis = plt.subplots(figsize=(6.4, 4.2))
-    cmap = matplotlib.colormaps["plasma"]
-    temperatures = [t for t, _ in tables]
-    norm = matplotlib.colors.Normalize(min(temperatures), max(temperatures) + 0.2 * (max(temperatures) - min(temperatures) + 1))
-    for temperature, table in tables:
-        x, y = table.columns[0], table.columns[1]
-        part = table[(table[x] > 0) & (table[y] > 0)]
-        axis.plot(part[x], part[y], marker="o", ms=2, lw=0.75, color=cmap(norm(temperature)), label=f"{temperature:g} K")
-    axis.set(xscale="log", yscale="log", xlabel=tables[0][1].columns[0], ylabel=tables[0][1].columns[1],
-             title="Replica r1 holds")
+    """gamma(q) = k_B T / [A q^2 S(q)] on each hold with the fit gamma_0 + kappa' q^2.
+
+    Replica-mean gamma(q) of both surfaces together. The fit window is the
+    summary's q range (fundamental to 0.30 Å^-1); points beyond it are drawn
+    open. The plateau gamma_app and the intercept gamma_0 are in
+    capillary_by_temperature.csv.
+    """
+    spectrum = _capillary_summary(results, "capillary_spectrum_by_temperature.csv")
+    fits = _capillary_summary(results, "capillary_by_temperature.csv").set_index("temperature_K")
+    qmax = 0.30
+    figure, axis = plt.subplots(figsize=(6.2, 4.4))
+    cmap = matplotlib.colormaps["coolwarm"]
+    temperatures = sorted(spectrum["temperature_K"].unique(), reverse=True)
+    norm = matplotlib.colors.Normalize(min(temperatures), max(temperatures))
+    for temperature in temperatures:
+        part = spectrum[(spectrum["temperature_K"] == temperature) & (spectrum["q_Ainv"] > 0)].sort_values("q_Ainv")
+        color = cmap(norm(temperature))
+        inside = part["q_Ainv"] <= qmax + 1e-9
+        axis.errorbar(part.loc[inside, "q_Ainv"], part.loc[inside, "gammaq_mean"],
+                      yerr=part.loc[inside, "gammaq_sd"], color=color, marker="o", ms=3, lw=0, elinewidth=0.7,
+                      label=f"{temperature:g} K")
+        axis.plot(part.loc[~inside, "q_Ainv"], part.loc[~inside, "gammaq_mean"], color=color, marker="o", ms=3,
+                  mfc="none", lw=0)
+        if temperature in fits.index and np.isfinite(fits.loc[temperature].get("gamma0_mN_m_mean", np.nan)):
+            g0 = fits.loc[temperature, "gamma0_mN_m_mean"]
+            kp = fits.loc[temperature].get("kappa_prime_mN_m_A2_mean", 0.0)
+            grid = np.linspace(0.0, qmax, 60)
+            axis.plot(grid, g0 + kp * grid ** 2, color=color, lw=0.9)
+    axis.set(xlabel=r"$q$ (Å$^{-1}$)", ylabel=r"$\gamma(q)=k_BT/[A\,q^2S(q)]$ (mN m$^{-1}$)", xlim=(0, None))
     axis.grid(alpha=0.2)
-    axis.legend(fontsize=7, ncol=2)
+    axis.legend(fontsize=7, ncol=2, title="Hold")
     return save(figure, out, stem)
+
+
+@panel("SI_capillary_spectrum")
+def si_capillary_spectrum(results, out, stem):
+    """Height spectrum S(q) of the intrinsic surface on each hold, log-log, with a q^-2 guide."""
+    spectrum = _capillary_summary(results, "capillary_spectrum_by_temperature.csv")
+    figure, axis = plt.subplots(figsize=(6.2, 4.4))
+    cmap = matplotlib.colormaps["coolwarm"]
+    temperatures = sorted(spectrum["temperature_K"].unique(), reverse=True)
+    norm = matplotlib.colors.Normalize(min(temperatures), max(temperatures))
+    for temperature in temperatures:
+        part = spectrum[(spectrum["temperature_K"] == temperature) & (spectrum["q_Ainv"] > 0)
+                        & (spectrum["S_mean"] > 0)].sort_values("q_Ainv")
+        axis.plot(part["q_Ainv"], part["S_mean"], color=cmap(norm(temperature)), marker="o", ms=2.5, lw=0.9,
+                  label=f"{temperature:g} K")
+    positive = spectrum[(spectrum["q_Ainv"] > 0) & (spectrum["S_mean"] > 0)]
+    if not positive.empty:
+        q0 = positive["q_Ainv"].min()
+        s0 = positive[positive["q_Ainv"] == q0]["S_mean"].median()
+        grid = np.geomspace(q0, 0.3, 20)
+        axis.plot(grid, s0 * (grid / q0) ** -2, color="black", ls=":", lw=1.0, label=r"$\propto q^{-2}$")
+    axis.set(xscale="log", yscale="log", xlabel=r"$q$ (Å$^{-1}$)", ylabel=r"$S(q)=\langle|h_q|^2\rangle$ (Å$^4$)")
+    axis.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    axis.xaxis.set_major_locator(matplotlib.ticker.FixedLocator([0.02, 0.05, 0.1, 0.2, 0.5, 1.0]))
+    axis.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%g"))
+    axis.grid(alpha=0.2, which="both")
+    axis.legend(fontsize=7, ncol=2, title="Hold")
+    return save(figure, out, stem)
+
+
+@panel("SI_derivative_window")
+def si_derivative_window(results, out, stem):
+    """Apparent C_V and alpha_core from 3- and 5-point slopes.
+
+    Top row: the slowest rate, replica mean ± 1 SD, both windows. Bottom row:
+    the 5-point minus 3-point value, replica mean, at every rate. The paired
+    difference is also written to ``<stem>.csv``.
+    """
+    three = pd.read_csv(need(Path(results, "thermo", "thermo_derivatives_by_replica.csv")))
+    five = pd.read_csv(need(Path(results, "thermo", "thermo_derivatives_window5_by_replica.csv")))
+    metrics = (("Cv_app_kcal_mol_K", r"$C_{V,\mathrm{app}}$ (kcal mol$^{-1}$ K$^{-1}$)"),
+               ("alpha_core_app_1K", r"$\alpha_{V,\mathrm{core}}$ (K$^{-1}$)"))
+    keys = ["replica", "rate_K_ns", "temperature_K", "metric"]
+    paired = three.merge(five, on=keys, suffixes=("_w3", "_w5"))
+    paired["difference"] = paired["value_w5"] - paired["value_w3"]
+    summary = paired.groupby(["rate_K_ns", "temperature_K", "metric"]).agg(
+        w3_mean=("value_w3", "mean"), w3_sd=("value_w3", "std"),
+        w5_mean=("value_w5", "mean"), w5_sd=("value_w5", "std"),
+        difference_mean=("difference", "mean"), difference_sd=("difference", "std"),
+        n_rep=("replica", "nunique")).reset_index()
+    out.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(out / f"{stem}.csv", index=False)
+    slowest = summary["rate_K_ns"].min()
+    written = []
+    for metric, label in metrics:
+        part = summary[(summary["metric"] == metric) & (summary["rate_K_ns"] == slowest)].sort_values("temperature_K")
+        if part.empty:
+            continue
+        figure, axis = plt.subplots(figsize=(5.6, 4.0))
+        for window, ls, marker in (("w3", "-", "o"), ("w5", "--", "s")):
+            axis.errorbar(part["temperature_K"], part[f"{window}_mean"], yerr=part[f"{window}_sd"], color="black",
+                          ls=ls, marker=marker, ms=3.6, mfc="white" if window == "w5" else "black", capsize=2,
+                          label=f"{window[1]}-point slope")
+        axis.set(xlabel="Cooling-window midpoint (K)", ylabel=label, title=f"{slowest:g} K/ns")
+        axis.grid(alpha=0.2)
+        axis.legend()
+        short = "Cv" if metric.startswith("Cv") else "alpha"
+        written += save(figure, out, f"{stem}_{short}")
+        figure, axis = plt.subplots(figsize=(5.6, 4.0))
+        for rate, rows in summary[summary["metric"] == metric].groupby("rate_K_ns"):
+            rows = rows.sort_values("temperature_K")
+            axis.plot(rows["temperature_K"], rows["difference_mean"], marker="o", ms=3,
+                      color=RATE_COLOR_BY_VALUE.get(float(rate)), label=f"{float(rate):g} K/ns")
+        axis.axhline(0, color="0.4", ls=":", lw=0.9)
+        axis.set(xlabel="Cooling-window midpoint (K)", ylabel=f"5-point − 3-point {label}")
+        axis.grid(alpha=0.2)
+        axis.legend(title="Cooling rate")
+        written += save(figure, out, f"{stem}_{short}_difference")
+    if not written:
+        raise ValueError("no C_V or alpha_core rows in the thermo derivative tables")
+    return written
 
 
 def main(argv=None):

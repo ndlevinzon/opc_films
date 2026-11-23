@@ -52,7 +52,7 @@ wildcard_constraints:
 
 rule all:
     input:
-        MANIFEST if M.empty else f"{F}/figures.done",
+        MANIFEST if M.empty else f"{F}/si_tables.done",
 
 
 rule profiles:
@@ -79,6 +79,20 @@ rule capillary:
         runtime=720,
     shell:
         "python {A}/cooling_path/03_run_row.py --manifest {MANIFEST} --row {wildcards.row} --capwave > {log} 2>&1"
+
+
+rule capillary_table:
+    # gamma_app, gamma_0, w, and w_CWT of the holds (SI tab:si_capillary),
+    # and the replica-mean spectra the SI_capillary panels draw.
+    input:
+        expand(f"{F}/capillary/{{row}}.done", row=HOLD),
+    output:
+        touch(f"{F}/capillary_table.done"),
+    log:
+        "logs/capillary_table.log",
+    shell:
+        "python {A}/cooling_path/04c_capillary_table.py --manifest {MANIFEST} --results results "
+        "--out results/capillary_summary > {log} 2>&1"
 
 
 rule qstar_row:
@@ -219,8 +233,11 @@ rule tg_dyn:
 
 
 rule energy_arrest:
+    # 04_summarize.py also reads the hold profiles (hold drift, SI Table S7),
+    # which the capillary rule writes.
     input:
         expand(f"{F}/profiles/{{row}}.done", row=RAMP),
+        expand(f"{F}/capillary/{{row}}.done", row=HOLD),
     output:
         touch(f"{F}/energy_arrest.done"),
     log:
@@ -251,6 +268,7 @@ rule figures:
             expand(f"{F}/endpoint_structure/{{row}}.done", row=END),
             f"{F}/lda_frames.done",
             expand(f"{F}/capillary/{{row}}.done", row=HOLD),
+            f"{F}/capillary_table.done",
             expand(f"{F}/hbond/{{row}}.done", row=RAMP + HOLD),
             expand(f"{F}/defects/{{row}}.done", row=RAMP + HOLD),
         ],
@@ -258,5 +276,21 @@ rule figures:
         touch(f"{F}/figures.done"),
     log:
         "logs/figures.log",
+    resources:
+        # panels.py reads the per-water landscape tables; 8 GB was OOM-killed.
+        mem_mb=32000,
+        runtime=480,
     shell:
         "bash workflow/reduce/figures.sh > {log} 2>&1"
+
+
+rule si_tables:
+    # Every table the SI quotes, gathered by SI label under results/si_tables.
+    input:
+        f"{F}/figures.done",
+    output:
+        touch(f"{F}/si_tables.done"),
+    log:
+        "logs/si_tables.log",
+    shell:
+        "python {A}/si_tables/collect_si_tables.py --root . > {log} 2>&1"

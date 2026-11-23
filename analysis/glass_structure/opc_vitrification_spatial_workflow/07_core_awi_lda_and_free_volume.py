@@ -287,37 +287,41 @@ def _summary(frame_rows):
     Returns
     -------
     list of dict
-        One row per kind, temperature, and region, with the replica mean
-        and sample standard deviation.
+        One row per kind, cooling rate, temperature, and region, with the
+        replica mean and sample standard deviation. Ramp windows of different
+        cooling rates share midpoint temperatures, so the rate is part of the
+        key; holds and endpoints have an empty rate.
     """
     per_replica = {}
     fields = ("f_lda", "f_normalized", "free_volume_fraction", "free_volume_normalized")
     for row in frame_rows:
         if row.get("f_normalized", "") == "":
             continue
-        key = (row["kind"], row["temperature_K"], row["region"], row["replica"])
+        key = (row["kind"], row.get("rate_K_ns", ""), row["temperature_K"], row["region"], row["replica"])
         per_replica.setdefault(key, []).append(row)
     replica_rows = []
     for key, items in per_replica.items():
         replica_rows.append({
             "kind": key[0],
-            "temperature_K": float(key[1]),
-            "region": key[2],
-            "replica": key[3],
+            "rate_K_ns": key[1],
+            "temperature_K": float(key[2]),
+            "region": key[3],
+            "replica": key[4],
             **{name: float(np.nanmean([float(item[name]) for item in items])) for name in fields},
             "f_normalized_frame_width": _frame_width(items, "f_normalized"),
             "free_volume_fraction_frame_width": _frame_width(items, "free_volume_fraction"),
         })
     grouped = {}
     for row in replica_rows:
-        grouped.setdefault((row["kind"], row["temperature_K"], row["region"]), []).append(row)
+        grouped.setdefault((row["kind"], row["rate_K_ns"], row["temperature_K"], row["region"]), []).append(row)
     summary = []
     for key, items in grouped.items():
         record = {
             "classifier_id": CLASSIFIER_ID,
             "kind": key[0],
-            "temperature_K": key[1],
-            "region": key[2],
+            "rate_K_ns": key[1],
+            "temperature_K": key[2],
+            "region": key[3],
             "n_replicas": len({item["replica"] for item in items}),
         }
         for name in fields:

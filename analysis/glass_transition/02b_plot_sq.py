@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -80,15 +81,28 @@ def main(argv=None):
     parser.add_argument("inputs", nargs="+")
     parser.add_argument("-o", "--out", default="Sq2D_compare.png")
     parser.add_argument("--band-sd", type=float, default=1.0, help="Replica-band width in standard deviations.")
+    parser.add_argument("--qstar-json", default=None,
+                        help="outputs/qstar.json. Marks the adopted q* and the measured mean peak.")
     args = parser.parse_args(argv)
     plt.figure(figsize=(8, 6))
     for path in args.inputs:
         frame = pd.read_csv(path)
-        plt.plot(frame["q_Ainv"], frame["Sq2D"], alpha=0.45, linewidth=1)
+        plt.plot(frame["q_Ainv"], frame["Sq2D"], color="0.6", alpha=0.45, linewidth=0.9)
     q, mean, sd, _merged = average_curves(args.inputs)
-    plt.plot(q, mean, linewidth=3, label="Mean")
+    plt.plot(q, mean, color="black", linewidth=2.2, label="Mean of the rows")
     low, high = curve_band(mean, sd, args.band_sd)
-    plt.fill_between(q, low, high, alpha=0.150, label=curve_caption(args.band_sd))
+    plt.fill_between(q, low, high, color="0.5", alpha=0.22, lw=0, label=curve_caption(args.band_sd))
+    marks = {}
+    if args.qstar_json and Path(args.qstar_json).is_file():
+        payload = json.loads(Path(args.qstar_json).read_text())
+        adopted = float(payload["qstar_adopted_Ainv"])
+        measured = float(payload["qstar_measured_mean_Ainv"])
+        marks = {"qstar_adopted_Ainv": adopted, "qstar_measured_mean_Ainv": measured,
+                 "qstar_measured_sd_Ainv": payload.get("qstar_measured_sd_Ainv")}
+        plt.axvline(adopted, color="black", ls=":", lw=1.1, label=rf"Adopted $q^*$ = {adopted:.3f} Å$^{{-1}}$")
+        if abs(measured - adopted) > 1e-6:
+            plt.axvline(measured, color="0.45", ls="-.", lw=1.0,
+                        label=rf"Measured peak = {measured:.3f} Å$^{{-1}}$")
     plt.xlim(0.5, 4.0)
     plt.xlabel(r"$q$ ($\AA^{-1}$)")
     plt.ylabel(r"$S^{\parallel}(q)$")
@@ -96,10 +110,13 @@ def main(argv=None):
     plt.legend()
     plt.tight_layout()
     plt.savefig(args.out, dpi=300)
+    plt.savefig(str(Path(args.out).with_suffix(".pdf")))
     plt.close()
     table = pd.DataFrame({"q_Ainv": q, "Sq_mean": mean, "Sq_sd": sd})
     table_path = args.out.replace(".png", "_mean.csv")
     table.to_csv(table_path, index=False)
+    if marks:
+        Path(args.out.replace(".png", "_qstar.json")).write_text(json.dumps(marks, indent=2))
     print(f"Wrote {args.out} and {table_path}")
     return 0
 

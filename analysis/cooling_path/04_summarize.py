@@ -239,6 +239,12 @@ def main():
     repo = Path(__file__).resolve().parents[2]
     for row in rows:
         row["outdir"] = str(result_directory(repo, "profiles", row))
+        # Hold profiles are written by the capillary rule (03_run_row.py
+        # --capwave), which runs the same density pass in its own directory.
+        if row.get("kind") == "hold" and not (Path(row["outdir"]) / "frame_geometry.csv").exists():
+            capillary = result_directory(repo, "capillary", row)
+            if (capillary / "frame_geometry.csv").exists():
+                row["outdir"] = str(capillary)
     data, holds, missing = [], [], []
     for row in rows:
         path = Path(row['outdir']) / 'frame_geometry.csv'

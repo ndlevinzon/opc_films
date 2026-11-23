@@ -80,9 +80,9 @@ optional defects_3to12 python analysis/interface_dynamics/hydrogen_bonds/05_plot
   --replica-means "$W/defects/replica_means.csv" --awi-inner 3 --awi-outer 12 --panel-label "" \
   --out "$S/SI_defect_fraction_3to12A"
 optional sq_compare python analysis/glass_transition/02b_plot_sq.py \
-  $R/qstar_row/*/sq.csv -o "$S/SI_Sq2D_compare.png"
+  $R/qstar_row/*/sq.csv --qstar-json outputs/qstar.json -o "$S/SI_Sq2D_compare.png"
 optional fs_curves_all python analysis/glass_transition/03d_plot_fs_curves.py \
-  --fs-glob "$R/fs_tau/*/fs_curve.csv" --out-prefix "$S/SI_fs_curves_all"
+  --fs-glob "$R/fs_tau/*/fs_curve.csv" --xscale log --out-prefix "$S/SI_fs_curves_all"
 optional tau_replicas python analysis/glass_transition/04b_plot_tau.py \
   -i $R/tg/tau_all.csv --out-prefix "$S/SI_tau"
 optional fig1c_contrast python analysis/interface_dynamics/plot_figure1c.py \
